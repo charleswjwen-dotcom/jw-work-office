@@ -1,0 +1,74 @@
+# ── 打包产物（PyInstaller） ────────────────────────────────
+poc/**/dist/
+poc/**/build/
+poc/**/*.spec
+
+# ── PoC 运行时临时输出（生成/修改的 .pptx/.png） ──────────
+poc/**/sample.pptx
+poc/**/orig.png
+poc/**/modified*.pptx
+poc/**/pool_test_out/
+poc/**/*_out/
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── Node ──────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Electron / electron-builder ───────────────────────────
+out/
+release/
+app/dist/
+*.dmg
+*.exe
+*.AppImage
+*.deb
+*.rpm
+*.zip
+*.tar.gz
+
+# ── 编辑器 & OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.suo
+*.user
+
+# ── 密钥与敏感配置（绝不入库） ───────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.*
+
+# ── 测试覆盖率 & 日志 ─────────────────────────────────────
+coverage/
+*.lcov
+*.log
+logs/
+
+# ── SQLite 数据库文件（运行时生成） ───────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── 临时文件 ──────────────────────────────────────────────
+*.tmp
+*.bak
+*.swp
+*~
