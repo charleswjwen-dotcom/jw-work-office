@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>My-work-office · 主界面交付稿</title>
+<style>
+/* ── Token system ───────────────────────────────────────── */
+:root {
+  --bg-base:       oklch(10% .010 260);
+  --bg-surface:    oklch(13% .012 260);
+  --bg-raised:     oklch(16% .014 260);
+  --bg-hover:      oklch(19% .013 260);
+  --bg-active:     oklch(22% .013 260);
+  --border-sub:    oklch(22% .012 260);
+  --border:        oklch(27% .013 260);
+  --border-strong: oklch(34% .014 260);
+  --fg-faint:      oklch(46% .012 260);
+  --fg-muted:      oklch(60% .012 260);
+  --fg-body:       oklch(80% .010 260);
+  --fg-head:       oklch(94% .008 260);
+
+  --accent:        oklch(62% .22  260);
+  --accent-dim:    oklch(55% .18  260);
+  --accent-soft:   oklch(18% .06  260);
+  --accent-text:   oklch(75% .15  260);
+
+  --green:         oklch(62% .18  145);
+  --green-soft:    oklch(17% .05  145);
+  --amber:         oklch(72% .16   75);
+  --amber-soft:    oklch(17% .05   75);
+  --red:           oklch(58% .20   22);
+  --red-soft:      oklch(16% .06   22);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius:    9px;
+  --radius-lg: 13px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Consolas", monospace;
+
+  --shadow-sm:   0 1px  3px oklch(0% 0 0 / .25);
+  --shadow-md:   0 4px 16px oklch(0% 0 0 / .40);
+  --shadow-lg:   0 8px 32px oklch(0% 0 0 / .55);
+}
+[data-theme="light"] {
+  --bg-base:       oklch(97% .004 260);
+  --bg-surface:    oklch(100% 0    260);
+  --bg-raised:     oklch(96% .006 260);
+  --bg-hover:      oklch(93% .007 260);
+  --bg-active:     oklch(89% .008 260);
+  --border-sub:    oklch(90% .006 260);
+  --border:        oklch(84% .008 260);
+  --border-strong: oklch(74% .010 260);
+  --fg-faint:      oklch(66% .010 260);
+  --fg-muted:      oklch(50% .010 260);
+  --fg-body:       oklch(26% .010 260);
+  --fg-head:       oklch(12% .008 260);
+
+  --accent:        oklch(50% .22  260);
+  --accent-dim:    oklch(44% .18  260);
+  --accent-soft:   oklch(94% .05  260);
+  --accent-text:   oklch(44% .18  260);
+
+  --green:         oklch(42% .18  145);
+  --green-soft:    oklch(94% .05  145);
+  --amber:         oklch(52% .16   75);
+  --amber-soft:    oklch(96% .05   75);
+  --red:           oklch(46% .20   22);
+  --red-soft:      oklch(96% .05   22);
+}
+
+/* ── Reset & page frame ─────────────────────────────────── */
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  font-family: var(--font-sans);
+  color: var(--fg-body);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  font-size:13px; line-height:1.5;
+  display:grid; place-items:center;
+  padding:28px;
+  min-height:100vh;
+  position:relative;
+  overflow:auto;
+}
+/* 滴水/流体背景 —— 苹果风渐隐光晕（增强） */
+body::before, body::after {
+  content:""; position:fixed; border-radius:50%; filter:blur(80px); z-index:0; pointer-events:none;
+  mix-blend-mode:screen;
+}
+body::before { width:680px; height:680px; top:-200px; left:-140px;
+  background: radial-gradient(circle, oklch(65% .26 260 / .55), oklch(62% .22 260 / .22) 45%, transparent 72%);
+  animation: drift-a 22s ease-in-out infinite alternate; }
+body::after  { width:620px; height:620px; bottom:-220px; right:-120px;
+  background: radial-gradient(circle, oklch(64% .24 200 / .48), oklch(60% .20 200 / .18) 45%, transparent 72%);
+  animation: drift-b 26s ease-in-out infinite alternate; }
+[data-theme="light"] body::before, [data-theme="light"] body::after { mix-blend-mode:multiply; opacity:.65; }
+
+@keyframes drift-a {
+  0%   { transform: translate(0,0) scale(1); }
+  50%  { transform: translate(90px,60px) scale(1.12); }
+  100% { transform: translate(40px,120px) scale(1.05); }
+}
+@keyframes drift-b {
+  0%   { transform: translate(0,0) scale(1.05); }
+  50%  { transform: translate(-80px,-50px) scale(1.14); }
+  100% { transform: translate(-40px,-110px) scale(1); }
+}
+
+.frame {
+  position:relative; z-index:1;
+  width:1440px; height:900px;
+  background: var(--bg-surface);
+  border:1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  backdrop-filter: blur(20px);
+}
+/* 让光晕渗透进 frame 内部 */
+.frame::before {
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(700px 480px at 12% -8%,  oklch(65% .26 260 / .20), transparent 60%),
+    radial-gradient(640px 460px at 100% 108%, oklch(64% .24 200 / .17), transparent 58%);
+  mix-blend-mode:screen;
+  animation: glow-pulse 14s ease-in-out infinite alternate;
+}
+[data-theme="light"] .frame::before { mix-blend-mode:multiply; opacity:.5; }
+.frame > * { position:relative; z-index:1; }
+@keyframes glow-pulse {
+  0%   { opacity:.75; }
+  100% { opacity:1; }
+}
+
+/* ── macOS 风标题栏 ─────────────────────────────────────── */
+.titlebar {
+  height:44px; flex:0 0 44px;
+  display:flex; align-items:center; gap:14px;
+  padding:0 16px;
+  border-bottom:1px solid var(--border-sub);
+  background: var(--bg-surface);
+  -webkit-app-region: drag;
+}
+.traffic { display:flex; gap:8px; }
+.traffic i { width:12px; height:12px; border-radius:50%; display:block; }
+.traffic .r { background:#ff5f57; } .traffic .y { background:#febc2e; } .traffic .g { background:#28c840; }
+.app-name { font-weight:600; color:var(--fg-head); font-size:13px; letter-spacing:.01em; display:flex; align-items:center; gap:8px; }
+.app-name .logo { width:20px; height:20px; border-radius:6px; background:linear-gradient(135deg,var(--accent),oklch(60% .20 200)); display:grid; place-items:center; font-size:11px; color:#fff; }
+.tb-spacer { flex:1; }
+.tb-search {
+  width:280px; height:28px; border-radius:999px;
+  background:var(--bg-raised); border:1px solid var(--border-sub);
+  display:flex; align-items:center; gap:7px; padding:0 12px;
+  color:var(--fg-faint); font-size:12px;
+}
+.tb-actions { display:flex; align-items:center; gap:6px; }
+.icon-btn { width:30px; height:28px; border-radius:var(--radius-sm); display:grid; place-items:center; color:var(--fg-muted); cursor:pointer; font-size:14px; }
+.icon-btn:hover { background:var(--bg-hover); color:var(--fg-head); }
+.seg { display:flex; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:999px; padding:2px; }
+.seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11px; padding:3px 11px; border-radius:999px; cursor:pointer; font-family:inherit; }
+.seg button.on { background:var(--bg-active); color:var(--fg-head); box-shadow:var(--shadow-sm); }
+
+/* ── 三栏主体（可拖拽调宽 + 折叠） ─────────────────────────── */
+.body {
+  flex:1; display:grid; min-height:0;
+  --w-left: 248px; --w-right: 336px;
+  grid-template-columns: var(--w-left) 6px 1fr 6px var(--w-right);
+}
+.body.left-collapsed  { --w-left: 0px; }
+.body.right-collapsed { --w-right: 0px; }
+.col { min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+.col.left  { border-right:1px solid var(--border-sub); background:var(--bg-surface); }
+.col.right { border-left:1px solid var(--border-sub); background:var(--bg-surface); }
+.col.center { background:var(--bg-base); }
+.body.left-collapsed  .col.left,
+.body.right-collapsed .col.right { border:0; }
+
+/* 拖拽分隔条 */
+.gutter { position:relative; cursor:col-resize; background:transparent; z-index:5; }
+.gutter::before { content:""; position:absolute; inset:0; margin:auto; width:1px; background:var(--border-sub); transition:background .12s, width .12s; }
+.gutter:hover::before, .gutter.dragging::before { width:2px; background:var(--accent); }
+.body.left-collapsed  .gutter.gl,
+.body.right-collapsed .gutter.gr { pointer-events:none; }
+.body.left-collapsed  .gutter.gl::before,
+.body.right-collapsed .gutter.gr::before { display:none; }
+
+/* 折叠还原把手（栏收起后停靠在窗口边缘） */
+.reveal { position:absolute; top:50%; transform:translateY(-50%); z-index:8; width:16px; height:52px;
+  display:none; place-items:center; cursor:pointer; color:var(--fg-muted);
+  background:var(--bg-raised); border:1px solid var(--border); font-size:11px; }
+.reveal.rl { left:0; border-left:0; border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
+.reveal.rr { right:0; border-right:0; border-radius:var(--radius-sm) 0 0 var(--radius-sm); }
+.reveal:hover { color:var(--fg-head); border-color:var(--border-strong); }
+.body.left-collapsed  .reveal.rl { display:grid; }
+.body.right-collapsed .reveal.rr { display:grid; }
+.col-h { flex:0 0 auto; padding:14px 16px 10px; display:flex; align-items:center; gap:8px; }
+.col-h .t { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--fg-faint); }
+.col-h .sp { flex:1; }
+.col-scroll { flex:1; overflow-y:auto; padding:0 10px 14px; }
+.col-scroll::-webkit-scrollbar { width:8px; }
+.col-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+
+/* ── 通用小组件 ─────────────────────────────────────────── */
+.btn { border:1px solid var(--border); background:var(--bg-raised); color:var(--fg-body);
+  font-family:inherit; font-size:12px; padding:6px 12px; border-radius:var(--radius-sm); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+.btn:hover { background:var(--bg-hover); border-color:var(--border-strong); }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.primary:hover { background:var(--accent-dim); }
+.btn.ghost { background:transparent; border-color:transparent; color:var(--fg-muted); }
+.btn.ghost:hover { background:var(--bg-hover); color:var(--fg-head); }
+.btn.sm { padding:4px 9px; font-size:11px; }
+.pill { font-size:10px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--fg-muted); }
+.pill.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent-text); }
+.pill.g { background:var(--green-soft); border-color:transparent; color:var(--green); }
+.pill.a { background:var(--amber-soft); border-color:transparent; color:var(--amber); }
+.dotline { height:1px; background:var(--border-sub); margin:10px 4px; }
+
+/* ── 左栏 ───────────────────────────────────────────────── */
+.nav { display:flex; flex-direction:column; gap:1px; }
+.nav a { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:var(--radius-sm); color:var(--fg-muted); cursor:pointer; font-size:12.5px; }
+.nav a:hover { background:var(--bg-hover); color:var(--fg-head); }
+.nav a.on { background:var(--accent-soft); color:var(--accent-text); font-weight:600; }
+.nav a .ic { width:16px; text-align:center; }
+.nav a .cnt { margin-left:auto; font-size:10px; color:var(--fg-faint); }
+.grp-label { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--fg-faint); padding:12px 10px 6px; }
+.file-card { display:flex; gap:10px; padding:9px; border-radius:var(--radius-sm); cursor:pointer; }
+.file-card:hover { background:var(--bg-hover); }
+.file-card.on { background:var(--bg-active); }
+.file-ico { width:34px; height:34px; flex:0 0 34px; border-radius:8px; display:grid; place-items:center; font-size:12px; font-weight:700; color:#fff; }
+.file-ico.w { background:#2b579a; } .file-ico.x { background:#217346; } .file-ico.p { background:#c43e1c; }
+.file-meta { min-width:0; flex:1; }
+.file-meta .fn { font-size:12.5px; color:var(--fg-head); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.file-meta .fs { font-size:10.5px; color:var(--fg-faint); margin-top:2px; display:flex; gap:6px; align-items:center; }
+.vbadge { font-size:9px; padding:0 5px; border-radius:999px; background:var(--bg-raised); border:1px solid var(--border-sub); color:var(--fg-muted); }
+
+/* ── 中栏 ───────────────────────────────────────────────── */
+.center-top { flex:0 0 auto; padding:12px 22px; border-bottom:1px solid var(--border-sub); display:flex; align-items:center; gap:10px; }
+.center-top .ttl { font-size:14px; font-weight:600; color:var(--fg-head); }
+.center-top .sub { font-size:11px; color:var(--fg-faint); }
+.chat { flex:1; overflow-y:auto; padding:22px 22px 8px; display:flex; flex-direction:column; gap:18px; }
+.chat::-webkit-scrollbar { width:8px; }
+.chat::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.msg { display:flex; gap:12px; max-width:96%; }
+.msg .av { width:28px; height:28px; flex:0 0 28px; border-radius:8px; display:grid; place-items:center; font-size:12px; }
+.msg.user { align-self:flex-end; flex-direction:row-reverse; }
+.msg.user .av { background:var(--bg-active); color:var(--fg-head); }
+.msg.ai .av { background:linear-gradient(135deg,var(--accent),oklch(60% .20 200)); color:#fff; }
+.bubble { padding:11px 14px; border-radius:var(--radius); font-size:13px; line-height:1.6; }
+.msg.user .bubble { background:var(--accent-soft); color:var(--fg-head); border:1px solid var(--accent); border-color:oklch(40% .12 260 / .5); }
+.msg.ai .bubble { background:var(--bg-surface); border:1px solid var(--border-sub); color:var(--fg-body); }
+
+/* Agent 工具运行条 */
+.toolrun { display:flex; align-items:center; gap:9px; padding:8px 11px; border:1px solid var(--border-sub); border-radius:var(--radius-sm); background:var(--bg-surface); font-size:11.5px; color:var(--fg-muted); margin-top:8px; }
+.toolrun .tk { font-family:var(--font-mono); font-size:10.5px; color:var(--accent-text); background:var(--accent-soft); padding:1px 6px; border-radius:var(--radius-xs); }
+.toolrun.done .st { color:var(--green); } .toolrun .st { margin-left:auto; }
+.spin { width:12px; height:12px; border-radius:50%; border:2px solid var(--border-strong); border-top-color:var(--accent); animation:sp .8s linear infinite; }
+@keyframes sp { to { transform:rotate(360deg); } }
+
+/* ChangeSet 产出卡 */
+.cs-card { margin-top:10px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--bg-surface); box-shadow:var(--shadow-sm); }
+.cs-h { padding:11px 14px; border-bottom:1px solid var(--border-sub); display:flex; align-items:center; gap:9px; }
+.cs-h .name { font-size:12.5px; font-weight:600; color:var(--fg-head); }
+.cs-h .kind { font-size:10px; font-family:var(--font-mono); padding:1px 6px; border-radius:var(--radius-xs); border:1px solid var(--border); color:var(--fg-muted); }
+.cs-diff { font-family:var(--font-mono); font-size:11.5px; line-height:1.75; padding:10px 14px; }
+.diff-del { background:var(--red-soft); color:var(--red); text-decoration:line-through; padding:1px 4px; border-radius:3px; }
+.diff-add { background:var(--green-soft); color:var(--green); padding:1px 4px; border-radius:3px; }
+.cs-item { display:flex; align-items:flex-start; gap:9px; padding:7px 14px; border-top:1px solid var(--border-sub); font-size:12px; }
+.cs-item input { margin-top:2px; accent-color:var(--accent); }
+.cs-foot { display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--border-sub); background:var(--bg-base); }
+.cs-foot .cnt { font-size:11px; color:var(--fg-muted); margin-right:auto; }
+.produced { display:flex; align-items:center; gap:9px; padding:9px 11px; margin-top:8px; border:1px solid var(--border-sub); border-radius:var(--radius-sm); background:var(--bg-surface); font-size:12px; }
+.produced .fi { width:24px; height:24px; border-radius:6px; display:grid; place-items:center; font-size:10px; font-weight:700; color:#fff; }
+
+/* 中栏视图切换：对话 / 文档预览 */
+.view-seg { display:flex; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:2px; }
+.view-seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11px; padding:3px 11px; border-radius:var(--radius-xs); cursor:pointer; font-family:inherit; }
+.view-seg button.on { background:var(--bg-active); color:var(--fg-head); box-shadow:var(--shadow-sm); }
+.collapse-btn { width:22px; height:22px; border-radius:var(--radius-xs); border:1px solid transparent; background:transparent; color:var(--fg-faint); cursor:pointer; font-size:12px; display:grid; place-items:center; }
+.collapse-btn:hover { background:var(--bg-hover); color:var(--fg-head); }
+
+/* ── 文档预览面板 ───────────────────────────────────────── */
+.preview { flex:1; min-height:0; display:none; flex-direction:column; }
+.center.show-preview .chat, .center.show-preview .composer { display:none; }
+.center.show-preview .preview { display:flex; }
+.center.show-kb .chat, .center.show-kb .composer, .center.show-kb .preview { display:none; }
+.center.show-kb .kb { display:flex; }
+
+/* 知识库 / 生成初稿面板 */
+.kb { flex:1; min-height:0; display:none; flex-direction:column; }
+.kb-bar { flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:10px 22px; border-bottom:1px solid var(--border-sub); background:var(--bg-surface); }
+.kb-bar .kb-seg { display:flex; gap:2px; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:2px; }
+.kb-bar .kb-seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11.5px; padding:4px 12px; border-radius:var(--radius-xs); cursor:pointer; font-family:inherit; }
+.kb-bar .kb-seg button.on { background:var(--bg-active); color:var(--fg-head); }
+.kb-scroll { flex:1; overflow:auto; padding:22px; }
+.kb-scroll::-webkit-scrollbar { width:9px; }
+.kb-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.kb-pane { display:none; }
+.kb.tab-lib .kb-pane.lib, .kb.tab-gen .kb-pane.gen { display:block; }
+/* 知识库条目卡 */
+.kcat { font-size:11px; color:var(--fg-faint); text-transform:uppercase; letter-spacing:.05em; margin:2px 0 10px; }
+.kcard { border:1px solid var(--border-sub); border-radius:var(--radius); background:var(--bg-surface); padding:14px 16px; margin-bottom:12px; box-shadow:var(--shadow-sm); }
+.kcard .kh { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.kcard .kh .kt { font-size:13px; font-weight:600; color:var(--fg-head); }
+.kcard .kh .sp { flex:1; }
+.ktag { font-size:10px; padding:1px 8px; border-radius:999px; background:var(--accent-soft); color:var(--accent-text); }
+.ktag.rec { background:var(--green-soft); color:var(--green); }
+.ktag.sug { background:var(--amber-soft); color:var(--amber); }
+.kmeta { font-size:11px; color:var(--fg-muted); display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; }
+.kmeta b { color:var(--fg-body); font-weight:600; }
+.kchips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+.kchip { font-size:10.5px; padding:2px 8px; border-radius:var(--radius-xs); background:var(--bg-raised); color:var(--fg-muted); border:1px solid var(--border-sub); }
+.kacts { display:flex; gap:6px; }
+/* 生成初稿 */
+.gen-src { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px; }
+.gen-opt { border:1px solid var(--border-sub); border-radius:var(--radius); background:var(--bg-surface); padding:14px 16px; cursor:pointer; }
+.gen-opt.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.gen-opt .got { font-size:12.5px; font-weight:600; color:var(--fg-head); margin-bottom:5px; display:flex; align-items:center; gap:7px; }
+.gen-opt .gos { font-size:11px; color:var(--fg-muted); line-height:1.55; }
+.gen-field { margin-bottom:14px; }
+.gen-field .gl { font-size:11px; color:var(--fg-faint); margin-bottom:6px; }
+.gen-field .gi { border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-surface); padding:9px 12px; font-size:12px; color:var(--fg-body); }
+.gen-field .gi.ph { color:var(--fg-faint); }
+.gen-outline { border:1px solid var(--border-sub); border-radius:var(--radius); background:var(--bg-base); padding:14px 16px; margin-bottom:14px; }
+.gen-outline .oh { font-size:11px; color:var(--fg-faint); margin-bottom:8px; display:flex; align-items:center; gap:7px; }
+.gen-outline .ol { font-size:12px; color:var(--fg-body); line-height:1.9; }
+.gen-outline .ol .l2 { padding-left:16px; color:var(--fg-muted); }
+.gen-cite { font-size:11px; color:var(--fg-muted); background:var(--accent-soft); border-radius:var(--radius-sm); padding:8px 12px; margin-bottom:14px; }
+.gen-foot { display:flex; gap:8px; }
+.pv-bar { flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:10px 22px; border-bottom:1px solid var(--border-sub); background:var(--bg-surface); }
+.pv-bar .fmt-seg { display:flex; gap:2px; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:2px; }
+.pv-bar .fmt-seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11px; padding:3px 10px; border-radius:var(--radius-xs); cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:5px; }
+.pv-bar .fmt-seg button.on { background:var(--bg-active); color:var(--fg-head); }
+.pv-bar .cmp-seg { margin-left:auto; display:flex; gap:2px; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:2px; }
+.pv-bar .cmp-seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11px; padding:3px 10px; border-radius:var(--radius-xs); cursor:pointer; font-family:inherit; }
+.pv-bar .cmp-seg button.on { background:var(--accent-soft); color:var(--accent-text); }
+.pv-scroll { flex:1; overflow:auto; padding:22px; }
+.pv-scroll::-webkit-scrollbar { width:9px; height:9px; }
+.pv-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.pv-doc { display:none; }
+.preview.fmt-word  .pv-doc.word,
+.preview.fmt-excel .pv-doc.excel,
+.preview.fmt-ppt   .pv-doc.ppt { display:block; }
+
+/* 对照双栏 vs 单栏（仅应用后） */
+.pv-cols { display:grid; gap:16px; align-items:start; }
+.preview.cmp-split .pv-cols { grid-template-columns:1fr 1fr; }
+.preview.cmp-single .pv-cols { grid-template-columns:1fr; }
+.preview.cmp-single .pv-side.before { display:none; }
+.pv-side { min-width:0; }
+.pv-side .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--fg-faint); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+.pv-side.before .lbl .dot { width:7px; height:7px; border-radius:50%; background:var(--red); }
+.pv-side.after  .lbl .dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+
+/* Word 排版纸张 */
+.paper { background:var(--bg-surface); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:26px 30px; box-shadow:var(--shadow-sm); font-size:12px; line-height:1.75; color:var(--fg-body); }
+.paper .h1 { font-size:17px; font-weight:700; margin:2px 0 8px; }
+.paper .h2 { font-size:14px; font-weight:700; margin:14px 0 6px; }
+.paper .h3 { font-size:12.5px; font-weight:700; margin:10px 0 4px; }
+.paper.after .h1 { color:#5b8def; } .paper.after .h2 { color:#5b8def; }
+.paper .toc { border:1px dashed var(--border); border-radius:var(--radius-xs); padding:10px 12px; margin:10px 0; font-size:11px; color:var(--fg-muted); }
+.paper .toc .tl { display:flex; justify-content:space-between; padding:1px 0; }
+.paper .p { margin:5px 0; color:var(--fg-muted); }
+.paper .chg { outline:2px solid oklch(62% .18 145 / .5); outline-offset:2px; border-radius:2px; }
+
+/* Excel 网格 */
+.grid { border:1px solid var(--border); border-radius:var(--radius-xs); overflow:hidden; background:var(--bg-surface); font-family:var(--font-mono); font-size:11px; }
+.grid table { border-collapse:collapse; width:100%; }
+.grid th, .grid td { border:1px solid var(--border-sub); padding:5px 9px; text-align:left; color:var(--fg-body); white-space:nowrap; }
+.grid th { background:var(--bg-raised); color:var(--fg-faint); font-weight:600; text-align:center; }
+.grid td.rownum { background:var(--bg-raised); color:var(--fg-faint); text-align:center; }
+.grid td.hl-add { background:var(--green-soft); color:var(--green); }
+.grid td.hl-del { background:var(--red-soft); color:var(--red); text-decoration:line-through; }
+.grid td.num { text-align:right; }
+
+/* PPT 幻灯片 */
+.slides { display:flex; flex-direction:column; gap:14px; }
+.slide { aspect-ratio:16/9; border:1px solid var(--border-sub); border-radius:var(--radius-sm); background:var(--bg-surface); box-shadow:var(--shadow-sm); padding:20px 24px; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.slide.after { background:linear-gradient(135deg, var(--bg-surface), oklch(20% .05 260)); }
+.slide .st { font-size:16px; font-weight:700; color:var(--fg-head); }
+.slide .ss { font-size:11px; color:var(--fg-muted); margin-top:4px; }
+.slide .bar-row { display:flex; align-items:flex-end; gap:12px; margin-top:auto; height:80px; }
+.slide .bar-row i { flex:1; border-radius:4px 4px 0 0; background:var(--accent); display:block; }
+.slide.after .bar-row i:nth-child(2){ background:var(--green); } .slide.after .bar-row i:nth-child(3){ background:var(--amber); }
+.slide .tag { position:absolute; top:12px; right:14px; font-size:10px; padding:1px 8px; border-radius:999px; }
+.slide.before .tag { background:var(--red-soft); color:var(--red); }
+.slide.after  .tag { background:var(--green-soft); color:var(--green); }
+
+/* composer */
+.composer { flex:0 0 auto; padding:0 22px 18px; border-top:1px solid var(--border-sub); position:relative; }
+.composer .grip { height:14px; margin:0 -22px 6px; cursor:row-resize; display:flex; align-items:center; justify-content:center; }
+.composer .grip::before { content:''; width:44px; height:4px; border-radius:999px; background:var(--border); transition:background .15s; }
+.composer .grip:hover::before, .composer .grip.dragging::before { background:var(--accent); }
+.composer .box { border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-surface); padding:10px 12px; display:flex; flex-direction:column; }
+.composer .ph { color:var(--fg-faint); font-size:13px; height:var(--composer-h, 44px); min-height:44px; overflow-y:auto; line-height:1.65; }
+.composer .ph::-webkit-scrollbar { width:8px; }
+.composer .ph::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.composer .bar { display:flex; align-items:center; gap:8px; margin-top:10px; }
+.composer .bar .sp { flex:1; }
+.mini-seg { display:flex; background:var(--bg-raised); border:1px solid var(--border-sub); border-radius:var(--radius-sm); padding:2px; }
+.mini-seg button { border:0; background:transparent; color:var(--fg-muted); font-size:11px; padding:3px 9px; border-radius:var(--radius-xs); cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:5px; }
+.mini-seg button.on { background:var(--bg-active); color:var(--fg-head); }
+
+/* ── 右栏 rail ──────────────────────────────────────────── */
+/* 右栏实时预览（常驻，无需点开） */
+.live-pv { flex:0 0 auto; display:flex; flex-direction:column; border-bottom:1px solid var(--border-sub); background:var(--bg-base); }
+.live-pv-h { display:flex; align-items:center; gap:8px; padding:10px 12px 8px; }
+.live-pv-h .t { font-size:11px; font-weight:600; color:var(--fg-head); display:flex; align-items:center; gap:6px; }
+.live-pv-h .live-dot { width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 0 0 oklch(62% .18 145 / .6); animation:live-blink 1.6s ease-out infinite; }
+@keyframes live-blink { 0%{ box-shadow:0 0 0 0 oklch(62% .18 145 / .55);} 70%{ box-shadow:0 0 0 6px oklch(62% .18 145 / 0);} 100%{ box-shadow:0 0 0 0 oklch(62% .18 145 / 0);} }
+.live-pv-h .sp { flex:1; }
+.live-pv-h .expand { border:0; background:transparent; color:var(--fg-faint); cursor:pointer; font-size:12px; padding:2px 6px; border-radius:var(--radius-xs); font-family:inherit; }
+.live-pv-h .expand:hover { background:var(--bg-active); color:var(--fg-head); }
+.live-stage { max-height:300px; overflow:auto; padding:0 12px 14px; }
+.live-stage::-webkit-scrollbar { width:8px; }
+.live-stage::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.live-stage .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--fg-faint); margin:2px 0 8px; display:flex; align-items:center; gap:6px; }
+.live-stage .lbl .dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+.live-stage .paper { font-size:11px; padding:16px 18px; }
+.live-stage .slide { padding:14px 16px; }
+.live-stage .grid { font-size:10px; }
+.live-doc { display:none; }
+.live-pv.fmt-word  .live-doc.word,
+.live-pv.fmt-excel .live-doc.excel,
+.live-pv.fmt-ppt   .live-doc.ppt { display:block; }
+.rail-tabs { display:flex; gap:2px; padding:10px 12px 0; }
+.rail-tabs button { flex:1; border:0; background:transparent; color:var(--fg-muted); font-size:11.5px; padding:7px 0 9px; cursor:pointer; font-family:inherit; border-bottom:2px solid transparent; }
+.rail-tabs button.on { color:var(--fg-head); border-bottom-color:var(--accent); font-weight:600; }
+.rail-body { flex:1; overflow-y:auto; padding:14px; }
+.rail-body::-webkit-scrollbar { width:8px; }
+.rail-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+.rsec { margin-bottom:20px; }
+.rsec-h { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--fg-faint); margin-bottom:9px; display:flex; align-items:center; gap:6px; }
+.rsec-h .sp { flex:1; }
+/* progress */
+.prog-bar { height:5px; border-radius:999px; background:var(--bg-active); overflow:hidden; margin-bottom:12px; }
+.prog-bar i { display:block; height:100%; width:60%; background:linear-gradient(90deg,var(--accent),oklch(60% .20 200)); border-radius:999px; }
+.step { display:flex; gap:10px; padding:5px 0; font-size:12px; }
+.step .mk { width:16px; height:16px; flex:0 0 16px; border-radius:50%; display:grid; place-items:center; font-size:9px; margin-top:1px; }
+.step.done .mk { background:var(--green); color:#fff; } .step.done .lb { color:var(--fg-muted); text-decoration:line-through; }
+.step.doing .mk { background:var(--accent); color:#fff; } .step.doing .lb { color:var(--fg-head); font-weight:600; }
+.step.wait .mk { background:var(--bg-active); color:var(--fg-faint); border:1px solid var(--border); }
+.step.wait .lb { color:var(--fg-faint); }
+/* pinned / context */
+.chip-file { display:flex; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--border-sub); border-radius:var(--radius-sm); margin-bottom:6px; font-size:11.5px; }
+.chip-file .fi { width:20px; height:20px; border-radius:5px; display:grid; place-items:center; font-size:9px; font-weight:700; color:#fff; }
+.badge-ctx { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid var(--border-sub); border-radius:999px; font-size:11px; color:var(--fg-muted); margin:0 6px 6px 0; }
+.badge-ctx .d { width:6px; height:6px; border-radius:50%; background:var(--green); }
+.scratch { font-size:11.5px; color:var(--fg-muted); line-height:1.7; padding:10px 11px; border:1px dashed var(--border); border-radius:var(--radius-sm); background:var(--bg-base); font-family:var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- ── 标题栏 ── -->
+  <div class="titlebar">
+    <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+    <div class="app-name"><span class="logo">W</span> My-work-office</div>
+    <div class="tb-spacer"></div>
+    <div class="tb-search">🔍 搜索文件、会话或指令…</div>
+    <div class="tb-spacer"></div>
+    <div class="seg" id="modeSeg">
+      <button class="on">✋ 手动确认</button>
+      <button>⚡ 自动低风险</button>
+      <button>🚀 快速通过</button>
+    </div>
+    <div class="tb-actions">
+      <span class="icon-btn" title="主题" id="themeBtn">☾</span>
+      <span class="icon-btn" title="设置">⚙</span>
+    </div>
+  </div>
+
+  <!-- ── 三栏主体 ── -->
+  <div class="body" id="body">
+    <span class="reveal rl" id="revealL" title="展开左栏">›</span>
+    <span class="reveal rr" id="revealR" title="展开右栏">‹</span>
+
+    <!-- 左栏：导航 + 文件 + 会话 -->
+    <div class="col left">
+      <div class="col-scroll">
+        <div class="nav" style="padding-top:12px">
+          <a class="on"><span class="ic">🗂</span> 工作台 <span class="cnt">3</span></a>
+          <a><span class="ic">🕒</span> 最近</a>
+          <a><span class="ic">📌</span> 已固定</a>
+          <a><span class="ic">⏰</span> 定时任务 <span class="cnt">2</span></a>
+          <a id="navKb"><span class="ic">🧠</span> 知识库 <span class="cnt">6</span></a>
+          <a><span class="ic">✨</span> 技能库</a>
+        </div>
+        <div class="grp-label">当前工作空间 · 文件</div>
+        <div class="file-card on">
+          <div class="file-ico w">W</div>
+          <div class="file-meta">
+            <div class="fn">Q3-经营分析报告.docx</div>
+            <div class="fs">2 分钟前 · <span class="vbadge">v2</span></div>
+          </div>
+        </div>
+        <div class="file-card">
+          <div class="file-ico x">X</div>
+          <div class="file-meta">
+            <div class="fn">销售明细-Q3.xlsx</div>
+            <div class="fs">10 分钟前 · <span class="vbadge">v1</span></div>
+          </div>
+        </div>
+        <div class="file-card">
+          <div class="file-ico p">P</div>
+          <div class="file-meta">
+            <div class="fn">季度述职.pptx</div>
+            <div class="fs">昨天 · <span class="vbadge">v4</span></div>
+          </div>
+        </div>
+        <div class="dotline"></div>
+        <div class="grp-label">会话历史</div>
+        <div class="nav">
+          <a class="on"><span class="ic">💬</span> 统一标题并重建目录</a>
+          <a><span class="ic">💬</span> 清洗销售明细去重</a>
+          <a><span class="ic">💬</span> 述职 PPT 配色美化</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分隔条：左/中 -->
+    <div class="gutter gl" id="gutterL" title="拖拽调整左栏宽度"></div>
+
+    <!-- 中栏：对话 + 产出卡 + composer -->
+    <div class="col center" id="center">
+      <div class="center-top">
+        <button class="collapse-btn" id="toggleL" title="折叠/展开左栏">⟨</button>
+        <div class="file-ico w" style="width:26px;height:26px;flex:0 0 26px;font-size:10px">W</div>
+        <div>
+          <div class="ttl">Q3-经营分析报告.docx</div>
+          <div class="sub">会话：统一标题并重建目录 · 手动确认模式</div>
+        </div>
+        <div class="tb-spacer" style="flex:1"></div>
+        <div class="view-seg" id="viewSeg">
+          <button class="on">对话</button>
+          <button>文档预览</button>
+        </div>
+        <button class="btn sm ghost" id="genEntry">✨ 生成初稿</button>
+        <button class="btn sm ghost">在文件夹显示</button>
+        <button class="btn sm">版本历史</button>
+        <button class="collapse-btn" id="toggleR" title="折叠/展开右栏">⟩</button>
+      </div>
+
+      <div class="chat">
+        <div class="msg user">
+          <div class="av">你</div>
+          <div class="bubble">把这份报告的各级标题统一为公司规范（黑体、字号按层级递减、主色 #2b579a），并重新生成目录。</div>
+        </div>
+
+        <div class="msg ai" style="width:100%;max-width:100%">
+          <div class="av">✦</div>
+          <div style="flex:1;min-width:0">
+            <div class="bubble">好的，我先读取文档大纲，规划步骤后逐项处理。涉及写入的操作会停在待确认，等你逐条审阅。</div>
+
+            <div class="toolrun done"><span style="color:var(--green)">✓</span> 读取大纲 <span class="tk">readOutline</span> <span class="st">识别 5 级标题 · 42 段</span></div>
+            <div class="toolrun done"><span style="color:var(--green)">✓</span> 制定计划 <span class="tk">plan</span> <span class="st">拆为 3 个子任务</span></div>
+            <div class="toolrun"><span class="spin"></span> 统一标题样式 <span class="tk">setHeadingStyle</span> <span class="st" style="color:var(--amber)">半确定性 · 待确认</span></div>
+
+            <!-- ChangeSet 产出卡 -->
+            <div class="cs-card">
+              <div class="cs-h">
+                <span class="name">变更集 · 标题样式统一</span>
+                <span class="kind">style · 18 处</span>
+                <span class="tb-spacer" style="flex:1"></span>
+                <span class="pill a">半确定性</span>
+              </div>
+              <div class="cs-diff">
+                <div><span class="diff-del">第一章　经营概况</span>（宋体 16px 黑色）</div>
+                <div><span class="diff-add">第一章　经营概况</span>（黑体 18px #2b579a 加粗）</div>
+              </div>
+              <div class="cs-item"><input type="checkbox" checked /> <div><b>H1 一级标题</b> · 5 处 → 黑体 18px #2b579a</div></div>
+              <div class="cs-item"><input type="checkbox" checked /> <div><b>H2 二级标题</b> · 9 处 → 黑体 15px #2b579a</div></div>
+              <div class="cs-item"><input type="checkbox" checked /> <div><b>H3 三级标题</b> · 4 处 → 黑体 13px 加粗</div></div>
+              <div class="cs-foot">
+                <span class="cnt" id="csCount">已选 3 / 3 项 · 影响 18 处</span>
+                <button class="btn sm ghost">放弃</button>
+                <button class="btn sm">部分应用</button>
+                <button class="btn primary sm">✓ 应用并快照</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="grip" id="composerGrip" title="上下拖动调节输入框高度"></div>
+        <div class="box">
+          <div class="ph">继续输入指令，或 @ 引用其他文件、/ 调用技能…</div>
+          <div class="bar">
+            <button class="btn sm ghost">＋ 附加文件</button>
+            <button class="btn sm ghost">@ 引用</button>
+            <div class="sp"></div>
+            <div class="mini-seg">
+              <button class="on">GPT-4o</button>
+              <button>Claude</button>
+              <button>本地</button>
+            </div>
+            <button class="btn primary sm">发送 ↵</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 文档预览面板（对话/文档预览 切换） -->
+      <div class="preview cmp-split fmt-word" id="preview">
+        <div class="pv-bar">
+          <div class="fmt-seg" id="fmtSeg">
+            <button class="on"><span class="fi w" style="width:14px;height:14px;border-radius:3px;background:#2b579a;color:#fff;display:inline-grid;place-items:center;font-size:8px">W</span> Word</button>
+            <button><span class="fi x" style="width:14px;height:14px;border-radius:3px;background:#217346;color:#fff;display:inline-grid;place-items:center;font-size:8px">X</span> Excel</button>
+            <button><span class="fi p" style="width:14px;height:14px;border-radius:3px;background:#c43e1c;color:#fff;display:inline-grid;place-items:center;font-size:8px">P</span> PPT</button>
+          </div>
+          <div class="cmp-seg" id="cmpSeg">
+            <button class="on">原文 ↔ 应用后</button>
+            <button>仅应用后</button>
+          </div>
+        </div>
+        <div class="pv-scroll">
+
+          <!-- Word 预览 -->
+          <div class="pv-doc word">
+            <div class="pv-cols">
+              <div class="pv-side before">
+                <div class="lbl"><span class="dot"></span> 原文 v1</div>
+                <div class="paper before">
+                  <div class="h1">第一章　经营概况</div>
+                  <div class="toc"><div class="tl"><span>第一章 经营概况</span><span>1</span></div><div class="tl"><span>第二章 财务分析</span><span>4</span></div></div>
+                  <div class="h2">1.1 市场环境</div>
+                  <div class="p">本季度整体市场需求平稳，行业竞争加剧……</div>
+                  <div class="h2">1.2 业务进展</div>
+                  <div class="p">重点产品线收入同比增长，渠道结构优化……</div>
+                </div>
+              </div>
+              <div class="pv-side after">
+                <div class="lbl"><span class="dot"></span> 应用后 v2（FW-1 统一样式 + FW-4 重建目录）</div>
+                <div class="paper after">
+                  <div class="h1 chg">第一章　经营概况</div>
+                  <div class="toc chg"><div class="tl"><span>第一章 经营概况</span><span>1</span></div><div class="tl"><span>&nbsp;&nbsp;1.1 市场环境</span><span>1</span></div><div class="tl"><span>&nbsp;&nbsp;1.2 业务进展</span><span>2</span></div><div class="tl"><span>第二章 财务分析</span><span>4</span></div></div>
+                  <div class="h2 chg">1.1 市场环境</div>
+                  <div class="p">本季度整体市场需求平稳，行业竞争加剧……</div>
+                  <div class="h2 chg">1.2 业务进展</div>
+                  <div class="p">重点产品线收入同比增长，渠道结构优化……</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Excel 预览 -->
+          <div class="pv-doc excel">
+            <div class="pv-cols">
+              <div class="pv-side before">
+                <div class="lbl"><span class="dot"></span> 原文 v1（含重复行）</div>
+                <div class="grid"><table>
+                  <tr><th></th><th>A 客户</th><th>B 金额</th><th>C 日期</th></tr>
+                  <tr><td class="rownum">1</td><td>华东-甲公司</td><td class="num">128,000</td><td>07-02</td></tr>
+                  <tr><td class="rownum">2</td><td class="hl-del">华东-甲公司</td><td class="num hl-del">128,000</td><td class="hl-del">07-02</td></tr>
+                  <tr><td class="rownum">3</td><td>华南-乙公司</td><td class="num">96,500</td><td>07-05</td></tr>
+                  <tr><td class="rownum">4</td><td>华北-丙公司</td><td class="num"></td><td>07-08</td></tr>
+                </table></div>
+              </div>
+              <div class="pv-side after">
+                <div class="lbl"><span class="dot"></span> 应用后 v2（FE 去重 + 补空值）</div>
+                <div class="grid"><table>
+                  <tr><th></th><th>A 客户</th><th>B 金额</th><th>C 日期</th></tr>
+                  <tr><td class="rownum">1</td><td>华东-甲公司</td><td class="num">128,000</td><td>07-02</td></tr>
+                  <tr><td class="rownum">2</td><td>华南-乙公司</td><td class="num">96,500</td><td>07-05</td></tr>
+                  <tr><td class="rownum">3</td><td>华北-丙公司</td><td class="num hl-add">73,200</td><td>07-08</td></tr>
+                </table></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PPT 预览 -->
+          <div class="pv-doc ppt">
+            <div class="pv-cols">
+              <div class="pv-side before">
+                <div class="lbl"><span class="dot"></span> 原文 v3</div>
+                <div class="slides">
+                  <div class="slide before">
+                    <span class="tag">改版前</span>
+                    <div class="st">Q3 业绩概览</div>
+                    <div class="ss">默认模板 · 灰底黑字</div>
+                    <div class="bar-row"><i style="height:40%"></i><i style="height:60%"></i><i style="height:50%"></i></div>
+                  </div>
+                </div>
+              </div>
+              <div class="pv-side after">
+                <div class="lbl"><span class="dot"></span> 应用后 v4（FP 配色美化 + 原生图表）</div>
+                <div class="slides">
+                  <div class="slide after">
+                    <span class="tag">改版后</span>
+                    <div class="st">Q3 业绩概览</div>
+                    <div class="ss">品牌主色 · 层级对比强化</div>
+                    <div class="bar-row"><i style="height:45%"></i><i style="height:78%"></i><i style="height:62%"></i></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 知识库 / 生成初稿面板 -->
+      <div class="kb tab-lib" id="kb">
+        <div class="kb-bar">
+          <div class="kb-seg" id="kbSeg">
+            <button class="on">知识库</button>
+            <button>生成初稿</button>
+          </div>
+          <span class="tb-spacer" style="flex:1"></span>
+          <button class="btn sm ghost" id="kbClose">✕ 关闭</button>
+        </div>
+        <div class="kb-scroll">
+          <div class="kb-pane lib">
+            <div class="kcat">文档类别 · 季度经营分析（沉淀自 4 份文档）</div>
+            <div class="kcard">
+              <div class="kh"><span class="kt">推荐目录结构</span><span class="ktag rec">推荐骨架</span><span class="sp"></span></div>
+              <div class="kmeta"><span>来源 <b>Q1/Q2/Q3 经营分析.docx</b></span><span>引用 <b>4</b> 次</span><span>置信度 <b>92%</b></span></div>
+              <div class="gen-outline" style="margin-bottom:10px"><div class="ol">一、经营概况<div class="l2">1.1 市场环境 / 1.2 业务进展</div>二、财务分析<div class="l2">2.1 收入结构 / 2.2 成本与利润</div>三、风险与对策　四、下季度计划</div></div>
+              <div class="kacts"><button class="btn sm ghost">编辑</button><button class="btn sm ghost">合并</button><button class="btn sm">用它生成初稿</button></div>
+            </div>
+            <div class="kcard">
+              <div class="kh"><span class="kt">风格指纹</span><span class="ktag rec">推荐风格</span><span class="sp"></span></div>
+              <div class="kmeta"><span>标题 <b>黑体 · 主色 #2b579a</b></span><span>正文 <b>宋体 12px</b></span><span>引用 <b>4</b> 次</span></div>
+              <div class="kchips"><span class="kchip">层级递减字号</span><span class="kchip">首行缩进 2 字符</span><span class="kchip">1.5 倍行距</span></div>
+              <div class="kacts"><button class="btn sm ghost">编辑</button><button class="btn sm ghost">降权</button></div>
+            </div>
+            <div class="kcat" style="margin-top:22px">文档类别 · 投标方案（新沉淀，待确认）</div>
+            <div class="kcard">
+              <div class="kh"><span class="kt">摘要 + 结构</span><span class="ktag sug">建议入库</span><span class="sp"></span></div>
+              <div class="kmeta"><span>来源 <b>某市政项目投标.docx</b></span><span>引用 <b>1</b> 次</span><span>置信度 <b>—</b></span></div>
+              <div class="kchips"><span class="kchip">技术方案</span><span class="kchip">商务报价</span><span class="kchip">资质证明</span><span class="kchip">服务承诺</span></div>
+              <div class="kacts"><button class="btn primary sm">✓ 确认入库</button><button class="btn sm ghost">忽略</button><button class="btn sm ghost">标记不入库</button></div>
+            </div>
+          </div>
+
+          <div class="kb-pane gen">
+            <div class="gen-src" id="genSrc">
+              <div class="gen-opt on" data-src="hist">
+                <div class="got">🧠 按历史沉淀生成</div>
+                <div class="gos">选一个已沉淀的文档类别，套用其推荐目录结构 + 风格 + 常用要点。越用越懂你的业务。</div>
+              </div>
+              <div class="gen-opt" data-src="ref">
+                <div class="got">📎 按新导入参考生成</div>
+                <div class="gos">临时导入/指定一份参考文件，即时提取它的目录结构与风格，套用到新主题（不要求先入库）。</div>
+              </div>
+            </div>
+            <div class="gen-field">
+              <div class="gl" id="genSrcLabel">选择知识类别</div>
+              <div class="gi" id="genSrcValue">季度经营分析（推荐骨架 · 置信度 92%）</div>
+            </div>
+            <div class="gen-field">
+              <div class="gl">新文件主题</div>
+              <div class="gi ph">例：Q4 经营分析报告 —— 华东大区</div>
+            </div>
+            <div class="gen-outline">
+              <div class="oh">📝 初稿大纲预览（沿用推荐结构，可逐节重生成）</div>
+              <div class="ol">一、经营概况<div class="l2">1.1 市场环境　1.2 业务进展</div>二、财务分析<div class="l2">2.1 收入结构　2.2 成本与利润</div>三、风险与对策　四、下季度计划</div>
+            </div>
+            <div class="gen-cite" id="genCite">生成依据：知识条目「季度经营分析·推荐骨架」+「风格指纹」（引用 4 次，可溯源）</div>
+            <div class="gen-foot">
+              <button class="btn primary" id="genRun">✦ 生成初稿</button>
+              <button class="btn ghost">多方案（生成 2–3 版）</button>
+              <span class="tb-spacer" style="flex:1"></span>
+              <span style="font-size:11px;color:var(--fg-faint);align-self:center">生成后进入 diff 预览 → 确认 → 落盘 → 快照</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分隔条：中/右 -->
+    <div class="gutter gr" id="gutterR" title="拖拽调整右栏宽度"></div>
+
+    <!-- 右栏：上下文 rail -->
+    <div class="col right">
+      <!-- 实时预览：随变更集应用自动更新，无需手动点开 -->
+      <div class="live-pv fmt-word" id="livePv">
+        <div class="live-pv-h">
+          <span class="t"><span class="live-dot"></span> 实时预览 · 应用后</span>
+          <span class="sp"></span>
+          <button class="expand" id="liveExpand" title="在中栏展开大图对照">⤢</button>
+        </div>
+        <div class="live-stage">
+          <div class="live-doc word">
+            <div class="lbl"><span class="dot"></span> v2 · FW-1 统一样式 + FW-4 重建目录</div>
+            <div class="paper after">
+              <div class="h1 chg">第一章　经营概况</div>
+              <div class="toc chg"><div class="tl"><span>第一章 经营概况</span><span>1</span></div><div class="tl"><span>&nbsp;&nbsp;1.1 市场环境</span><span>1</span></div><div class="tl"><span>&nbsp;&nbsp;1.2 业务进展</span><span>2</span></div><div class="tl"><span>第二章 财务分析</span><span>4</span></div></div>
+              <div class="h2 chg">1.1 市场环境</div>
+              <div class="p">本季度整体市场需求平稳，行业竞争加剧……</div>
+              <div class="h2 chg">1.2 业务进展</div>
+              <div class="p">重点产品线收入同比增长，渠道结构优化……</div>
+            </div>
+          </div>
+          <div class="live-doc excel">
+            <div class="lbl"><span class="dot"></span> v2 · FE 去重 + 补空值</div>
+            <div class="grid"><table>
+              <tr><th></th><th>A 客户</th><th>B 金额</th><th>C 日期</th></tr>
+              <tr><td class="rownum">1</td><td>华东-甲公司</td><td class="num">128,000</td><td>07-02</td></tr>
+              <tr><td class="rownum">2</td><td>华南-乙公司</td><td class="num">96,500</td><td>07-05</td></tr>
+              <tr><td class="rownum">3</td><td>华北-丙公司</td><td class="num hl-add">73,200</td><td>07-08</td></tr>
+            </table></div>
+          </div>
+          <div class="live-doc ppt">
+            <div class="lbl"><span class="dot"></span> v4 · FP 配色美化 + 原生图表</div>
+            <div class="slides">
+              <div class="slide after">
+                <span class="tag">改版后</span>
+                <div class="st">Q3 业绩概览</div>
+                <div class="ss">品牌主色 · 层级对比强化</div>
+                <div class="bar-row"><i style="height:45%"></i><i style="height:78%"></i><i style="height:62%"></i></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rail-tabs" id="railTabs">
+        <button class="on">进度</button>
+        <button>固定</button>
+        <button>上下文</button>
+      </div>
+      <div class="rail-body">
+        <div class="rsec">
+          <div class="rsec-h">任务进度 <span class="sp"></span><span style="color:var(--fg-muted)">3 / 5</span></div>
+          <div class="prog-bar"><i></i></div>
+          <div class="step done"><span class="mk">✓</span><span class="lb">读取文档大纲</span></div>
+          <div class="step done"><span class="mk">✓</span><span class="lb">拆解为 3 个子任务</span></div>
+          <div class="step done"><span class="mk">✓</span><span class="lb">生成标题样式变更集</span></div>
+          <div class="step doing"><span class="mk">•</span><span class="lb">等待用户确认（18 处）</span></div>
+          <div class="step wait"><span class="mk">4</span><span class="lb">重建目录 generateTOC</span></div>
+        </div>
+
+        <div class="rsec">
+          <div class="rsec-h">指令 / 目标</div>
+          <div class="scratch">统一各级标题为公司规范<br/>（黑体·层级递减·主色 #2b579a）<br/>并重建目录。</div>
+        </div>
+
+        <div class="rsec">
+          <div class="rsec-h">固定文件 <span class="sp"></span><span style="color:var(--fg-faint);cursor:pointer">＋</span></div>
+          <div class="chip-file"><span class="fi w">W</span> Q3-经营分析报告.docx <span class="tb-spacer" style="flex:1"></span><span style="color:var(--fg-faint)">📌</span></div>
+          <div class="chip-file"><span class="fi x">X</span> 品牌规范.xlsx</div>
+        </div>
+
+        <div class="rsec">
+          <div class="rsec-h">Scratchpad · Agent 笔记</div>
+          <div class="scratch">// 检测到原文档目录为手工维护<br/>// 应用标题样式后需 rebuild TOC<br/>// H4/H5 未纳入目录（level ≤ 3）</div>
+        </div>
+
+        <div class="rsec" style="margin-bottom:0">
+          <div class="rsec-h">上下文 · 连接器 / 技能</div>
+          <span class="badge-ctx"><span class="d"></span> Word 工具集</span>
+          <span class="badge-ctx"><span class="d"></span> 品牌模板</span>
+          <span class="badge-ctx"><span class="d" style="background:var(--fg-faint)"></span> 全文索引</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    document.getElementById('themeBtn').addEventListener('click', function () {
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      this.textContent = next === 'dark' ? '☾' : '☀';
+    });
+    function segToggle(id) {
+      var el = document.getElementById(id); if (!el) return;
+      el.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        el.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      });
+    }
+    segToggle('modeSeg');
+    var tabs = document.getElementById('railTabs');
+    tabs.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      tabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    });
+    document.querySelectorAll('.mini-seg').forEach(function (m) {
+      m.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        m.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      });
+    });
+    var csCount = document.getElementById('csCount');
+    document.querySelectorAll('.cs-item input').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var boxes = document.querySelectorAll('.cs-item input'), sel = 0, hits = [5,9,4], tot = 0;
+        boxes.forEach(function (x, i) { if (x.checked) { sel++; tot += hits[i]; } });
+        csCount.textContent = '已选 ' + sel + ' / ' + boxes.length + ' 项 · 影响 ' + tot + ' 处';
+      });
+    });
+
+    // 中栏视图切换：对话 / 文档预览
+    var center = document.getElementById('center');
+    var viewSeg = document.getElementById('viewSeg');
+    function setView(name) {
+      viewSeg.querySelectorAll('button').forEach(function (x) {
+        x.classList.toggle('on', x.textContent.trim() === name);
+      });
+      center.classList.toggle('show-preview', name === '文档预览');
+      center.classList.toggle('show-kb', name === '知识库');
+    }
+    viewSeg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      setView(b.textContent.trim());
+    });
+
+    // 知识库 / 生成初稿
+    var kb = document.getElementById('kb');
+    var kbSeg = document.getElementById('kbSeg');
+    function setKbTab(name) {
+      kbSeg.querySelectorAll('button').forEach(function (x) {
+        x.classList.toggle('on', x.textContent.trim() === name);
+      });
+      kb.classList.toggle('tab-lib', name === '知识库');
+      kb.classList.toggle('tab-gen', name === '生成初稿');
+    }
+    kbSeg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      setKbTab(b.textContent.trim());
+    });
+    function openKb(tab) { setKbTab(tab); setView('知识库'); }
+    document.getElementById('navKb').addEventListener('click', function () { openKb('知识库'); });
+    document.getElementById('genEntry').addEventListener('click', function () { openKb('生成初稿'); });
+    document.getElementById('kbClose').addEventListener('click', function () { setView('对话'); });
+    document.querySelectorAll('.kcard .kacts .btn.sm:not(.ghost)').forEach(function (b) {
+      b.addEventListener('click', function () { openKb('生成初稿'); });
+    });
+
+    // 生成来源切换：历史沉淀 / 新导入参考
+    var genSrc = document.getElementById('genSrc');
+    var genSrcLabel = document.getElementById('genSrcLabel');
+    var genSrcValue = document.getElementById('genSrcValue');
+    var genCite = document.getElementById('genCite');
+    var histVals = { l: '选择知识类别', v: '季度经营分析（推荐骨架 · 置信度 92%）', c: '生成依据：知识条目「季度经营分析·推荐骨架」+「风格指纹」（引用 4 次，可溯源）' };
+    var refVals  = { l: '参考文件（新导入）', v: '某市政项目投标.docx（即时提取结构 + 风格，不入库）', c: '生成依据：临时参考文件「某市政项目投标.docx」的目录结构与风格指纹' };
+    genSrc.addEventListener('click', function (e) {
+      var o = e.target.closest('.gen-opt'); if (!o) return;
+      genSrc.querySelectorAll('.gen-opt').forEach(function (x) { x.classList.toggle('on', x === o); });
+      var isRef = o.getAttribute('data-src') === 'ref';
+      var d = isRef ? refVals : histVals;
+      genSrcLabel.textContent = d.l; genSrcValue.textContent = d.v; genCite.textContent = d.c;
+    });
+
+    // 预览：格式切换 Word/Excel/PPT
+    var preview = document.getElementById('preview');
+    var livePv = document.getElementById('livePv');
+    var fmtSeg = document.getElementById('fmtSeg');
+    function applyFmt(cls) {
+      preview.classList.remove('fmt-word','fmt-excel','fmt-ppt');
+      preview.classList.add(cls);
+      livePv.classList.remove('fmt-word','fmt-excel','fmt-ppt');
+      livePv.classList.add(cls);
+    }
+    fmtSeg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      fmtSeg.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      var t = b.textContent;
+      var cls = t.indexOf('Excel') >= 0 ? 'fmt-excel' : t.indexOf('PPT') >= 0 ? 'fmt-ppt' : 'fmt-word';
+      applyFmt(cls);
+    });
+
+    // 实时预览：⤢ 在中栏展开大图对照
+    document.getElementById('liveExpand').addEventListener('click', function () {
+      setView('文档预览');
+    });
+
+    // 预览：对照模式 原文↔应用后 / 仅应用后
+    var cmpSeg = document.getElementById('cmpSeg');
+    cmpSeg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      cmpSeg.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      var single = b.textContent.trim() === '仅应用后';
+      preview.classList.toggle('cmp-single', single);
+      preview.classList.toggle('cmp-split', !single);
+    });
+
+    // 左右栏折叠 / 还原
+    var body = document.getElementById('body');
+    document.getElementById('toggleL').addEventListener('click', function () { body.classList.toggle('left-collapsed'); });
+    document.getElementById('toggleR').addEventListener('click', function () { body.classList.toggle('right-collapsed'); });
+    document.getElementById('revealL').addEventListener('click', function () { body.classList.remove('left-collapsed'); });
+    document.getElementById('revealR').addEventListener('click', function () { body.classList.remove('right-collapsed'); });
+
+    // 拖拽分隔条调整栏宽
+    function makeDrag(gutterId, side) {
+      var g = document.getElementById(gutterId), startX, startW;
+      var varName = side === 'left' ? '--w-left' : '--w-right';
+      var min = side === 'left' ? 180 : 260, max = side === 'left' ? 420 : 520;
+      g.addEventListener('mousedown', function (e) {
+        startX = e.clientX;
+        startW = parseInt(getComputedStyle(body).getPropertyValue(varName)) || (side==='left'?248:336);
+        g.classList.add('dragging');
+        document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+        function move(ev) {
+          var dx = ev.clientX - startX;
+          var w = side === 'left' ? startW + dx : startW - dx;
+          w = Math.max(min, Math.min(max, w));
+          body.style.setProperty(varName, w + 'px');
+        }
+        function up() {
+          g.classList.remove('dragging');
+          document.body.style.cursor = ''; document.body.style.userSelect = '';
+          window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+        }
+        window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+      });
+    }
+    makeDrag('gutterL', 'left');
+    makeDrag('gutterR', 'right');
+
+    // 拖拽调节 composer 输入框高度
+    (function () {
+      var grip = document.getElementById('composerGrip');
+      var ph = document.querySelector('.composer .ph');
+      var startY, startH, min = 44, max = 320;
+      grip.addEventListener('mousedown', function (e) {
+        startY = e.clientY;
+        startH = parseInt(getComputedStyle(ph).height) || min;
+        grip.classList.add('dragging');
+        document.body.style.cursor = 'row-resize'; document.body.style.userSelect = 'none';
+        function move(ev) {
+          var h = startH - (ev.clientY - startY);
+          h = Math.max(min, Math.min(max, h));
+          body.style.setProperty('--composer-h', h + 'px');
+        }
+        function up() {
+          grip.classList.remove('dragging');
+          document.body.style.cursor = ''; document.body.style.userSelect = '';
+          window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+        }
+        window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+      });
+    })();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design token system (S1 frozen · OKLCH) ─────────────────
+   Source of truth: ui-design/main-screen.html :root
+   Any change here MUST be mirrored back to the design spec. */
+:root {
+  --bg-base: oklch(97% 0.004 260);
+  --bg-surface: oklch(100% 0 260);
+  --bg-raised: oklch(96% 0.006 260);
+  --bg-hover: oklch(93% 0.007 260);
+  --bg-active: oklch(89% 0.008 260);
+  --border-sub: oklch(90% 0.006 260);
+  --border: oklch(84% 0.008 260);
+  --border-strong: oklch(74% 0.01 260);
+  --fg-faint: oklch(66% 0.01 260);
+  --fg-muted: oklch(50% 0.01 260);
+  --fg-body: oklch(26% 0.01 260);
+  --fg-head: oklch(12% 0.008 260);
+
+  --accent: oklch(50% 0.22 260);
+  --accent-dim: oklch(44% 0.18 260);
+  --accent-soft: oklch(94% 0.05 260);
+  --accent-text: oklch(44% 0.18 260);
+
+  --green: oklch(42% 0.18 145);
+  --green-soft: oklch(94% 0.05 145);
+  --amber: oklch(52% 0.16 75);
+  --amber-soft: oklch(96% 0.05 75);
+  --red: oklch(46% 0.2 22);
+  --red-soft: oklch(96% 0.05 22);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 9px;
+  --radius-lg: 13px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Microsoft YaHei', 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+
+  --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.12);
+  --shadow-md: 0 4px 16px oklch(0% 0 0 / 0.16);
+  --shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.22);
+}
+
+.dark {
+  --bg-base: oklch(10% 0.01 260);
+  --bg-surface: oklch(13% 0.012 260);
+  --bg-raised: oklch(16% 0.014 260);
+  --bg-hover: oklch(19% 0.013 260);
+  --bg-active: oklch(22% 0.013 260);
+  --border-sub: oklch(22% 0.012 260);
+  --border: oklch(27% 0.013 260);
+  --border-strong: oklch(34% 0.014 260);
+  --fg-faint: oklch(46% 0.012 260);
+  --fg-muted: oklch(60% 0.012 260);
+  --fg-body: oklch(80% 0.01 260);
+  --fg-head: oklch(94% 0.008 260);
+
+  --accent: oklch(62% 0.22 260);
+  --accent-dim: oklch(55% 0.18 260);
+  --accent-soft: oklch(18% 0.06 260);
+  --accent-text: oklch(75% 0.15 260);
+
+  --green: oklch(62% 0.18 145);
+  --green-soft: oklch(17% 0.05 145);
+  --amber: oklch(72% 0.16 75);
+  --amber-soft: oklch(17% 0.05 75);
+  --red: oklch(58% 0.2 22);
+  --red-soft: oklch(16% 0.06 22);
+
+  --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.25);
+  --shadow-md: 0 4px 16px oklch(0% 0 0 / 0.4);
+  --shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.55);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--fg-body);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+  line-height: 1.5;
+}

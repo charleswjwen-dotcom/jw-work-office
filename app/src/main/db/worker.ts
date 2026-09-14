@@ -1,0 +1,100 @@
+import type {
+  ChangeSetRecord,
+  DbRequest,
+  DbRequestType,
+  DbResponse,
+  FileRecord
+} from '../../shared/db-protocol'
+import { openDatabase } from './connection'
+import { DataService } from './data-service'
+
+const service = new DataService({
+  handle: openDatabase(process.env.MWO_DB_FILE ?? ':memory:'),
+  dirs: {
+    tmpDir: process.env.MWO_TMP_DIR ?? '.',
+    changesetDir: process.env.MWO_CHANGESET_DIR ?? '.'
+  }
+})
+
+function handle(req: DbRequest): unknown {
+  switch (req.type) {
+    case 'db.ready':
+      return { ok: true as const }
+    case 'workspace.ensure': {
+      const p = req.payload as { id: string; name: string }
+      return service.workspaces.ensure(p.id, p.name)
+    }
+    case 'file.create':
+      return service.files.create(req.payload as FileRecord)
+    case 'file.get':
+      return service.files.get((req.payload as { id: string }).id)
+    case 'file.listByWorkspace': {
+      const p = req.payload as { workspaceId: string; type?: FileRecord['type'] }
+      return service.files.listByWorkspace(p.workspaceId, p.type)
+    }
+    case 'file.update': {
+      const p = req.payload as { id: string; patch: Partial<FileRecord> }
+      return service.files.update(p.id, p.patch)
+    }
+    case 'file.delete':
+      return { deleted: service.files.delete((req.payload as { id: string }).id) }
+    case 'version.create':
+      return service.versions.create(req.payload as never)
+    case 'version.listByFile':
+      return service.versions.listByFile((req.payload as { fileId: string }).fileId)
+    case 'changeSet.create':
+      return service.createChangeSet(req.payload as ChangeSetRecord)
+    case 'changeSet.get':
+      return service.changeSets.get((req.payload as { id: string }).id)
+    case 'changeSet.listPending':
+      return service.changeSets.listPending()
+    case 'changeSet.updateStatus': {
+      const p = req.payload as { id: string; status: ChangeSetRecord['status'] }
+      return service.changeSets.updateStatus(p.id, p.status)
+    }
+    case 'conversation.create':
+      return service.conversations.create(req.payload as never)
+    case 'message.create':
+      return service.conversations.createMessage(req.payload as never)
+    case 'message.listByConversation':
+      return service.conversations.listMessages(
+        (req.payload as { conversationId: string }).conversationId
+      )
+    case 'search.indexFile': {
+      const p = req.payload as { fileId: string; content: string; metadata?: string }
+      service.search.indexFile(p.fileId, p.content, p.metadata)
+      return { ok: true as const }
+    }
+    case 'search.removeFile':
+      service.search.removeFile((req.payload as { fileId: string }).fileId)
+      return { ok: true as const }
+    case 'search.query': {
+      const p = req.payload as { query: string; limit?: number }
+      return service.search.query(p.query, p.limit)
+    }
+    case 'recovery.run':
+      return service.runRecovery()
+    default: {
+      const exhaustive: never = req.type as never
+      throw new Error(`Unknown db request type: ${String(exhaustive)}`)
+    }
+  }
+}
+
+process.parentPort?.on('message', (event) => {
+  const req = event.data as DbRequest
+  let response: DbResponse
+  try {
+    const payload = handle(req)
+    response = { id: req.id, ok: true, payload: payload as never }
+  } catch (err) {
+    response = {
+      id: req.id,
+      ok: false,
+      error: { message: err instanceof Error ? err.message : String(err) }
+    }
+  }
+  process.parentPort?.postMessage(response)
+})
+
+export type { DbRequestType }

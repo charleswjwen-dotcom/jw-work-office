@@ -9,6 +9,7 @@ poc/**/orig.png
 poc/**/modified*.pptx
 poc/**/pool_test_out/
 poc/**/*_out/
+poc/**/lo_profile/
 
 # ── Python ────────────────────────────────────────────────
 __pycache__/
