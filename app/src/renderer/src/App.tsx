@@ -4,6 +4,8 @@ import { Button } from '@renderer/components/ui/button'
 import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
 import { ChangeSetCard } from '@renderer/components/chat/ChangeSetCard'
 import { VersionHistoryPanel } from '@renderer/components/chat/VersionHistoryPanel'
+import { ExternalChangePanel } from '@renderer/components/chat/ExternalChangePanel'
+import { ManualEditPanel } from '@renderer/components/chat/ManualEditPanel'
 import { useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
 import type { FileRecord } from '@shared/db-protocol'
@@ -37,6 +39,9 @@ function App(): React.JSX.Element {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [bubbles, setBubbles] = useState<ChatBubble[]>([])
   const [prompt, setPrompt] = useState('')
+  // 手动微调面板重挂载序号（T-S2-05A）：提交成功时 +1，以 key 重挂载清空
+  // 草稿（与 VersionHistoryPanel 切换文件重挂载的模式同源）。
+  const [manualResetSeq, setManualResetSeq] = useState(0)
   const bubbleSeq = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -112,6 +117,8 @@ function App(): React.JSX.Element {
       // 接受后 onApplied 已生成快照版本（T-S2-06）：版本历史与 diff 预览缓存同步失效。
       void qc.invalidateQueries({ queryKey: ['versions'] })
       void qc.invalidateQueries({ queryKey: ['version-diff'] })
+      // T-S2-05A：正文已变，右栏手动微调的段落数据同步失效。
+      void qc.invalidateQueries({ queryKey: ['paragraphs'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -152,6 +159,8 @@ function App(): React.JSX.Element {
       void qc.invalidateQueries({ queryKey: ['version-diff'] })
       void qc.invalidateQueries({ queryKey: ['changesets'] })
       void qc.invalidateQueries({ queryKey: ['files'] })
+      // T-S2-05A：正文已回退，右栏手动微调的段落数据同步失效。
+      void qc.invalidateQueries({ queryKey: ['paragraphs'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -170,6 +179,87 @@ function App(): React.JSX.Element {
       }
     },
     onError: (err: Error) => pushBubble('system', `导入失败：${err.message}`)
+  })
+
+  // —— T-S2-05A 手动微调与外部编辑感知（PRD 2A.6 / 架构 §5.1）——
+  // 手动微调提交：主进程与磁盘基线逐段 diff，产出 source=manual 的 pending
+  // ChangeSet；成功后重挂载编辑面板清空草稿，确认动作回到会话里的信任卡片。
+  const manualSubmitMutation = useMutation({
+    mutationFn: (vars: { fileId: string; editedParagraphs: { index: number; text: string }[] }) =>
+      window.api.createManualChangeset(vars.fileId, vars.editedParagraphs),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `提交失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else if (res.changeSetId) {
+        pushBubble(
+          'assistant',
+          `手动微调已提交（${res.changeCount ?? 0} 处变更），请在会话中确认应用。`
+        )
+        setManualResetSeq((n) => n + 1)
+      } else {
+        pushBubble('assistant', '没有检测到文本变化，未生成变更集。')
+      }
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 外部编辑采纳（架构 §5.1「单一事实源」）：ChangeSet(source=external) +
+  // Version(author=external) + 基线前移；同文件 pending 已在检出时置 stale，
+  // 这里集中失效全部相关缓存。
+  const externalAcceptMutation = useMutation({
+    mutationFn: (fileId: string) => window.api.acceptExternalChange(fileId),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `采纳失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble('assistant', '外部改动已采纳为新基线（已生成版本与变更记录）。')
+      }
+      void qc.invalidateQueries({ queryKey: ['external-detections'] })
+      void qc.invalidateQueries({ queryKey: ['external-diff'] })
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+      void qc.invalidateQueries({ queryKey: ['files'] })
+      void qc.invalidateQueries({ queryKey: ['versions'] })
+      void qc.invalidateQueries({ queryKey: ['version-diff'] })
+      void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 外部编辑忽略：仅推进基线（contentHash/size/modifiedAt），不落版本记录。
+  const externalIgnoreMutation = useMutation({
+    mutationFn: (fileId: string) => window.api.ignoreExternalChange(fileId),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `忽略失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble('assistant', '已忽略外部改动，基线已重定到当前磁盘内容。')
+      }
+      void qc.invalidateQueries({ queryKey: ['external-detections'] })
+      void qc.invalidateQueries({ queryKey: ['files'] })
+      void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 手动触发全量扫描（fs.watch 降级兜底）：scan 直接返回检出数组，
+  // 写入 ['external-detections'] 缓存即可，无需再等轮询。
+  const externalScanMutation = useMutation({
+    mutationFn: () => window.api.scanExternalChanges(),
+    onSuccess: (detections) => {
+      qc.setQueryData(['external-detections'], detections)
+      pushBubble('assistant', `扫描完成：${detections.length} 个文件检出外部改动。`)
+    },
+    onError: (err: Error) => pushBubble('system', `扫描失败：${err.message}`)
   })
 
   const sendPrompt = (): void => {
@@ -349,6 +439,14 @@ function App(): React.JSX.Element {
             会话{selectedFile ? ` · ${selectedFile.name}` : ''}
           </h2>
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
+            {/* T-S2-05A 外部编辑横幅（PRD 2A.6「不静默覆盖」）：置顶常显，无检出时组件自渲染 null。 */}
+            <ExternalChangePanel
+              busy={externalAcceptMutation.isPending || externalIgnoreMutation.isPending}
+              scanning={externalScanMutation.isPending}
+              onAccept={(fileId) => externalAcceptMutation.mutate(fileId)}
+              onIgnore={(fileId) => externalIgnoreMutation.mutate(fileId)}
+              onScan={() => externalScanMutation.mutate()}
+            />
             {bubbles.length === 0 && pendingChangesets.length === 0 ? (
               <p className="text-sm text-text-muted">
                 {selectedFile
@@ -445,17 +543,26 @@ function App(): React.JSX.Element {
         )}
 
         <section
-          aria-label="预览与工件"
+          aria-label="手动微调与工件"
           className="flex min-h-0 flex-col border-l border-border"
           hidden={layout.rightCollapsed}
         >
           <h2 className="shrink-0 border-b border-border px-4 py-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            预览 / 工件
+            手动微调 / 工件
           </h2>
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            <p className="text-sm text-text-muted">
-              预览与 diff 工件区（Word mammoth 预览 + diff 高亮待后续任务）。
-            </p>
+            {selectedFile ? (
+              <ManualEditPanel
+                key={`${selectedFile.id}:${manualResetSeq}`}
+                file={selectedFile}
+                busy={manualSubmitMutation.isPending}
+                onSubmit={(editedParagraphs) =>
+                  manualSubmitMutation.mutate({ fileId: selectedFile.id, editedParagraphs })
+                }
+              />
+            ) : (
+              <p className="text-sm text-text-muted">先在左侧选择文件后可手动微调段落。</p>
+            )}
           </div>
         </section>
       </main>

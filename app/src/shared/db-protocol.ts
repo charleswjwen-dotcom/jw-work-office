@@ -93,6 +93,9 @@ export type DbRequestMap = {
     response: FileRecord | null
   }
   'file.delete': { request: { id: string }; response: { deleted: number } }
+  // T-S2-05A 外部编辑感知：跨工作区全量文件清单（含 contentHash/modifiedAt
+  // 基线），供启动扫描与 fs.watch 去抖后的重扫做权威比对。
+  'file.listAll': { request: undefined; response: FileRecord[] }
   'version.create': { request: VersionRecord; response: VersionRecord }
   'version.listByFile': {
     request: { fileId: string }
@@ -128,6 +131,12 @@ export type DbRequestMap = {
   'changeSet.discard': {
     request: { id: string }
     response: ChangeSetRecord | null
+  }
+  // T-S2-05A 冲突消解：外部编辑检出时统计该文件被置 stale 的变更集数量
+  // （含历史已处理记录——重启后仍可追溯），供 UI 显式提示「有 N 个待确认变更失效」。
+  'changeSet.countByFileStatus': {
+    request: { fileId: string; status: ChangeSetRecord['status'] }
+    response: { count: number }
   }
   'conversation.create': {
     request: ConversationRecord

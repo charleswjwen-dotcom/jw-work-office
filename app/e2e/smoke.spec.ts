@@ -252,3 +252,101 @@ test('version:restore 通道可用：未知 id 返回结构化 VERSION_NOT_FOUND
     )
     .toBe('VERSION_NOT_FOUND')
 })
+
+// T-S2-05A 冒烟：手动微调与外部编辑感知通道（架构 §5.1 / PRD 2A.6）。
+// 与 chatSend/changeset 同一结构化错误契约：未知文件 → { ok:false, error.code }。
+// getParagraphs 依赖数据层（DATA_LAYER_NOT_READY）、createManualChangeset 依赖
+// 信任栈（TRUST_NOT_READY）、acceptExternalChange 依赖外部感知服务
+// （WATCH_NOT_READY）——三者均为结构化返回而非 throw，evaluate 的 catch
+// 不触发，expect.poll 持续重试直到各栈就绪并返回最终错误码。
+test('file:getParagraphs 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { getParagraphs?: (fileId: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.getParagraphs) return 'NO_BRIDGE'
+          try {
+            const result = (await api.getParagraphs('no-such-file')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('FILE_NOT_FOUND')
+})
+
+test('manual:createChangeset 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: {
+                createManualChangeset?: (
+                  fileId: string,
+                  editedParagraphs: { index: number; text: string }[]
+                ) => Promise<unknown>
+              }
+            }
+          ).api
+          if (!api?.createManualChangeset) return 'NO_BRIDGE'
+          try {
+            const result = (await api.createManualChangeset('no-such-file', [])) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('FILE_NOT_FOUND')
+})
+
+test('external:accept 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { acceptExternalChange?: (fileId: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.acceptExternalChange) return 'NO_BRIDGE'
+          try {
+            const result = (await api.acceptExternalChange('no-such-file')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('FILE_NOT_FOUND')
+})

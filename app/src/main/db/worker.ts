@@ -39,6 +39,9 @@ function handle(req: DbRequest): unknown {
     }
     case 'file.delete':
       return { deleted: service.files.delete((req.payload as { id: string }).id) }
+    // T-S2-05A 外部编辑感知：跨工作区全量清单（含基线字段）。
+    case 'file.listAll':
+      return service.files.listAll()
     case 'version.create':
       return service.versions.create(req.payload as never)
     case 'version.listByFile':
@@ -62,6 +65,11 @@ function handle(req: DbRequest): unknown {
     case 'changeSet.discard':
       // 架构 §5 清理顺序：先删外置 changes 文件、再删 DB 行（DataService 内实现）。
       return service.discardChangeSet((req.payload as { id: string }).id)
+    case 'changeSet.countByFileStatus': {
+      // T-S2-05A 冲突消解：外部编辑检出时统计该文件 stale 变更集数量。
+      const p = req.payload as { fileId: string; status: ChangeSetRecord['status'] }
+      return { count: service.changeSets.countByFileStatus(p.fileId, p.status) }
+    }
     case 'conversation.create':
       return service.conversations.create(req.payload as never)
     case 'message.create':

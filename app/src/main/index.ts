@@ -15,6 +15,7 @@ import { DocumentSession } from './agent/document-session'
 import { AgentService } from './agent/agent-service'
 import { TrustService } from './trust/trust-service'
 import { VersionService } from './trust/version-service'
+import { ExternalWatchService } from './trust/external-watch'
 
 const log = createLogger('main')
 
@@ -28,6 +29,7 @@ let filesDir = ''
 let agentService: AgentService | null = null
 let trustService: TrustService | null = null
 let versionService: VersionService | null = null
+let externalWatch: ExternalWatchService | null = null
 
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -99,6 +101,23 @@ async function initDataLayer(): Promise<void> {
     { event: 'agent-ready', providerMode: resolved.mode, note: resolved.note },
     'agent stack ready'
   )
+
+  // === T-S2-05A 外部编辑感知（PRD 2A.6 第 2 层）===
+  // 启动即全量扫描一次（重建内存检出态——含上次运行期间未处理的外部改动），
+  // 随后 fs.watch 去抖监听。扫描失败不阻断启动（渲染层有手动扫描按钮兜底）。
+  externalWatch = new ExternalWatchService({
+    dbPort: dbClient,
+    filePort: fileClient,
+    versionPort: versionService,
+    filesDir
+  })
+  void externalWatch.scan().catch((err) => {
+    log.warn(
+      { event: 'external-startup-scan', err: err instanceof Error ? err.message : String(err) },
+      'startup external scan failed'
+    )
+  })
+  externalWatch.startWatching()
 }
 
 function createWindow(): void {
@@ -271,6 +290,89 @@ app.whenReady().then(() => {
     }
   })
 
+  // === T-S2-05A 手动微调与外部编辑感知（PRD 2A.6 / 架构 §5.1）===
+  // 手动微调产出标准 ChangeSet(source=manual) 走信任流；外部编辑三选项：
+  // 采纳=ChangeSet(source=external)+Version(author=external)+基线前移，忽略=仅基线前移。
+  // 错误规范与信任流一致：TrustFlowError/ExternalWatchError(code) → { ok:false, error }。
+  ipcMain.handle('file:getParagraphs', async (_e, fileId: string) => {
+    if (!dbClient || !fileClient) {
+      return { ok: false, error: { code: 'DATA_LAYER_NOT_READY', message: '数据层未就绪' } }
+    }
+    try {
+      const file = await dbClient.request('file.get', { id: fileId })
+      if (!file) {
+        return { ok: false, error: { code: 'FILE_NOT_FOUND', message: `文件 ${fileId} 不存在` } }
+      }
+      const { paragraphs } = await fileClient.request('word.parseParagraphs', {
+        sourcePath: file.path
+      })
+      return { ok: true, paragraphs }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle(
+    'manual:createChangeset',
+    async (_e, fileId: string, editedParagraphs: { index: number; text: string }[]) => {
+      if (!trustService) {
+        return { ok: false, error: { code: 'TRUST_NOT_READY', message: '信任服务未就绪' } }
+      }
+      try {
+        const { changeSet, changeCount } = await trustService.createManualPending(
+          fileId,
+          editedParagraphs
+        )
+        return { ok: true, changeSetId: changeSet?.id, changeCount }
+      } catch (err) {
+        return { ok: false, error: toTrustError(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('external:listDetected', async () => {
+    if (!externalWatch) return []
+    return externalWatch.listDetected()
+  })
+
+  ipcMain.handle('external:getDiff', async (_e, fileId: string) => {
+    if (!externalWatch) {
+      return { ok: false, error: { code: 'WATCH_NOT_READY', message: '外部编辑感知未就绪' } }
+    }
+    try {
+      return { ok: true, changes: await externalWatch.getExternalDiff(fileId) }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('external:accept', async (_e, fileId: string) => {
+    if (!externalWatch) {
+      return { ok: false, error: { code: 'WATCH_NOT_READY', message: '外部编辑感知未就绪' } }
+    }
+    try {
+      return { ok: true, ...(await externalWatch.acceptExternal(fileId)) }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('external:ignore', async (_e, fileId: string) => {
+    if (!externalWatch) {
+      return { ok: false, error: { code: 'WATCH_NOT_READY', message: '外部编辑感知未就绪' } }
+    }
+    try {
+      return { ok: true, contentHash: await externalWatch.ignoreExternal(fileId) }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('external:scan', async () => {
+    if (!externalWatch) return []
+    return externalWatch.scan()
+  })
+
   createWindow()
 
   initDataLayer().catch((err) => {
@@ -293,6 +395,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  // T-S2-05A：先停 fs.watch（去抖定时器一并清理），再关数据层。
+  externalWatch?.stopWatching()
   dbClient?.close().catch(() => undefined)
   dbClient = null
   fileClient?.close().catch(() => undefined)

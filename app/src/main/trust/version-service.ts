@@ -65,7 +65,7 @@ export class VersionService {
   // 后像快照（§5 快照数据流）：写入成功的工作文件整体复制进 snapshots 目录，
   // 再落 versions 行、移 currentVersionId 指针。快照是"这一刻文件内容"的
   // 字节级事实，回溯以它为准而非按 ChangeSet 反演（T-S0-04 结论③）。
-  async onApplied(input: TrustVersionAppliedInput): Promise<void> {
+  async onApplied(input: TrustVersionAppliedInput): Promise<string> {
     const versionId = randomUUID()
     const snapshotPath = join(this.deps.snapshotsDir, `${versionId}${SNAPSHOT_SUFFIX}`)
     await this.deps.filePort.request('file.copy', {
@@ -76,14 +76,27 @@ export class VersionService {
       fileId: input.fileId
     })
     const seq = (versions[0]?.seq ?? 0) + 1
+    // T-S2-05A 来源映射（架构 §5.1）：manual→author 'user'、external→author
+    // 'external'、ai（缺省）→ 'ai'；中文摘要按来源措辞；updatedBy 区分 agent
+    // 写入与用户侧动作。快照/seq/指针移动对来源不敏感——「手动优化同样进
+    // 版本快照可回退」是 T-S2-05A 验收标准。
+    const source = input.source ?? 'ai'
+    const author: VersionRecord['author'] =
+      source === 'manual' ? 'user' : source === 'external' ? 'external' : 'ai'
+    const changeSummary =
+      source === 'manual'
+        ? `手动修改 ${input.appliedCount}/${input.totalCount} 项`
+        : source === 'external'
+          ? `外部编辑 ${input.appliedCount}/${input.totalCount} 项`
+          : `AI 修改 ${input.appliedCount}/${input.totalCount} 项`
     const record: VersionRecord = {
       id: versionId,
       fileId: input.fileId,
       seq,
       createdAt: Date.now(),
       triggerCommand: input.sourceCommand,
-      author: 'ai',
-      changeSummary: `AI 修改 ${input.appliedCount}/${input.totalCount} 项`,
+      author,
+      changeSummary,
       storageType: 'full',
       snapshotPath,
       changeSetId: input.changeSetId,
@@ -91,7 +104,7 @@ export class VersionService {
       remoteId: null,
       etag: null,
       syncState: 'local',
-      updatedBy: 'agent'
+      updatedBy: source === 'ai' ? 'agent' : 'user'
     }
     await this.deps.dbPort.request('version.create', record)
     // §5 7A.3：快照与 versions 行都已成功，才允许移动 currentVersionId 指针。
@@ -109,6 +122,7 @@ export class VersionService {
       },
       'post-image snapshot created'
     )
+    return versionId
   }
 
   async listVersionViews(fileId: string): Promise<VersionView[]> {

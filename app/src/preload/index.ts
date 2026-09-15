@@ -17,7 +17,16 @@ const api: IpcApi = {
   // —— T-S2-06 版本历史与线性回溯 ——
   listVersions: (fileId) => ipcRenderer.invoke('version:list', fileId),
   getVersionDiff: (versionId) => ipcRenderer.invoke('version:diff', versionId),
-  restoreVersion: (versionId) => ipcRenderer.invoke('version:restore', versionId)
+  restoreVersion: (versionId) => ipcRenderer.invoke('version:restore', versionId),
+  // —— T-S2-05A 手动微调与外部编辑感知 ——
+  getParagraphs: (fileId) => ipcRenderer.invoke('file:getParagraphs', fileId),
+  createManualChangeset: (fileId, editedParagraphs) =>
+    ipcRenderer.invoke('manual:createChangeset', fileId, editedParagraphs),
+  listExternalDetections: () => ipcRenderer.invoke('external:listDetected'),
+  getExternalDiff: (fileId) => ipcRenderer.invoke('external:getDiff', fileId),
+  acceptExternalChange: (fileId) => ipcRenderer.invoke('external:accept', fileId),
+  ignoreExternalChange: (fileId) => ipcRenderer.invoke('external:ignore', fileId),
+  scanExternalChanges: () => ipcRenderer.invoke('external:scan')
 }
 
 if (process.contextIsolated) {

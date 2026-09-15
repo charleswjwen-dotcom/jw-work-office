@@ -155,6 +155,12 @@ export class FileRepository {
     return this.db.select().from(files).where(where).all().map(toFileRecord)
   }
 
+  // T-S2-05A 外部编辑感知：跨工作区全量清单（启动扫描/去抖重扫的输入，
+  // 含 contentHash/modifiedAt 基线）。
+  listAll(): FileRecord[] {
+    return this.db.select().from(files).all().map(toFileRecord)
+  }
+
   update(id: string, patch: Partial<FileRecord>): FileRecord | null {
     const values: Partial<FileRow> = {}
     if (patch.name !== undefined) values.name = patch.name
@@ -291,6 +297,16 @@ export class ChangeSetRepository {
       .returning()
       .get()
     return row ? toChangeSetRecord(row) : null
+  }
+
+  // T-S2-05A 冲突消解：统计该文件指定状态的变更集数量（含历史已处理行——
+  // 重启后 UI 仍能提示「有 N 个待确认变更失效」）。
+  countByFileStatus(fileId: string, status: ChangeSetRecord['status']): number {
+    return this.db
+      .select({ id: changeSets.id })
+      .from(changeSets)
+      .where(and(eq(changeSets.fileId, fileId), eq(changeSets.status, status)))
+      .all().length
   }
 }
 

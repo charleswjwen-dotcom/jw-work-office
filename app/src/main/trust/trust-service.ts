@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AtomicChange, ChangeSet } from '../../shared/agent'
 import type { ChangeSetRecord } from '../../shared/db-protocol'
 import type { DbRequestMap, DbRequestType } from '../../shared/db-protocol'
@@ -17,6 +18,9 @@ import { createLogger } from '../logger'
 //   ChangeSet 保持 pending、文件保持原样——不存在"半应用"状态。
 // - reject：用户拒绝 → changeSet.discard（先删外置 changes 文件、再删 DB 行，
 //   §5 清理顺序）→ 文件不变。
+// - T-S2-05A createManualPending：应用内手动微调（PRD 2A.6 第 1 层）——全量
+//   段落文本输入 → 仅含差异的 kind=text 变更 → source=manual 的标准 pending
+//   ChangeSet，accept/快照/回溯与 AI 变更同链路（架构 §5.1「单一事实源」）。
 // - T-S2-06 后像快照钩子：accept 写入成功后调 version.onApplied 生成版本快照
 //   （§5 7A.3：快照写成功才移 currentVersionId 指针），失败则整轮 accept 抛错、
 //   状态保持 pending——重放会因 expectedBefore 不一致被文件引擎拦截。
@@ -52,6 +56,9 @@ export interface TrustVersionAppliedInput {
   filePath: string
   changeSetId: string
   sourceCommand: string | null
+  // T-S2-05A 变更来源：VersionService 按此映射 versions.author 与中文摘要
+  // （manual→'user'、external→'external'）；缺省按 'ai'，既有调用方兼容。
+  source?: 'ai' | 'manual' | 'external'
   contentHash: string
   parentVersionId: string | null
   appliedCount: number
@@ -59,7 +66,8 @@ export interface TrustVersionAppliedInput {
 }
 
 export interface TrustVersionPort {
-  onApplied(input: TrustVersionAppliedInput): Promise<void>
+  // 返回新建版本 id（T-S2-05A：外部采纳结果回传，渲染层可联动版本历史）。
+  onApplied(input: TrustVersionAppliedInput): Promise<string>
 }
 
 export interface TrustServiceDeps {
@@ -97,7 +105,10 @@ export class TrustService {
   async persistPending(
     changeSet: ChangeSet,
     fileId: string,
-    sourceCommand: string | null
+    sourceCommand: string | null,
+    // T-S2-05A：变更来源（ai=Agent 轮、manual=应用内微调）；external 采纳
+    // 出生即 applied，不经此方法。缺省 'ai' 保持既有调用方兼容。
+    source: 'ai' | 'manual' | 'external' = 'ai'
   ): Promise<ChangeSetRecord> {
     if (changeSet.status !== 'pending') {
       throw new TrustFlowError(
@@ -117,7 +128,7 @@ export class TrustService {
     const record: ChangeSetRecord = {
       id: changeSet.id,
       fileId,
-      source: 'ai',
+      source,
       sourceCommand,
       status: 'pending',
       changes: changeSet.changes,
@@ -125,9 +136,95 @@ export class TrustService {
       remoteId: null,
       etag: null,
       syncState: 'local',
-      updatedBy: 'agent'
+      updatedBy: source === 'ai' ? 'agent' : 'user'
     }
     return this.deps.dbPort.request('changeSet.create', record)
+  }
+
+  // T-S2-05A 第 1 层：应用内手动微调（PRD 2A.6）。输入=编辑器全量段落文本
+  // （UI 按当前段落渲染），输出=source=manual 的标准 pending ChangeSet——
+  // accept/部分接受/快照/回溯与 AI 变更完全同链路（架构 §5.1「单一事实源」，
+  // 无手动专用路径）。能力边界=word.applyParagraphEdits：只支持段内文本替换、
+  // 段落数不可变；空段/含换行的段会被 splitParagraphs 过滤或拆分，导致落盘
+  // 索引错位——一律拒绝（MANUAL_PARAGRAPH_INVALID），段落增删请走对话流程。
+  async createManualPending(
+    fileId: string,
+    editedParagraphs: { index: number; text: string }[]
+  ): Promise<{ changeSet: ChangeSetRecord | null; changeCount: number }> {
+    const file = await this.deps.dbPort.request('file.get', { id: fileId })
+    if (!file) {
+      throw new TrustFlowError('FILE_NOT_FOUND', `文件 ${fileId} 不存在`)
+    }
+    // 基线校验：外部编辑未处理（磁盘已偏离基线）时拒绝——before 会失真，
+    // 用户需先在检出横幅处理外部改动（采纳/忽略）再微调。
+    const parsed = await this.deps.filePort.request('word.parse', { sourcePath: file.path })
+    if (file.contentHash && parsed.contentHash !== file.contentHash) {
+      throw new TrustFlowError(
+        'BASELINE_MISMATCH',
+        '文件已被外部修改，请先处理外部改动（采纳或忽略）再手动微调'
+      )
+    }
+    const { paragraphs } = await this.deps.filePort.request('word.parseParagraphs', {
+      sourcePath: file.path
+    })
+    if (editedParagraphs.length !== paragraphs.length) {
+      throw new TrustFlowError(
+        'MANUAL_PARAGRAPH_COUNT_MISMATCH',
+        `段落数不匹配：文档 ${paragraphs.length} 段，提交 ${editedParagraphs.length} 段`
+      )
+    }
+    const seen = new Set<number>()
+    for (const p of editedParagraphs) {
+      if (
+        !Number.isInteger(p.index) ||
+        p.index < 0 ||
+        p.index >= paragraphs.length ||
+        seen.has(p.index)
+      ) {
+        throw new TrustFlowError('MANUAL_PARAGRAPH_INVALID', `段落索引非法：${p.index}`)
+      }
+      seen.add(p.index)
+      if (p.text.length === 0 || p.text.includes('\n')) {
+        throw new TrustFlowError(
+          'MANUAL_PARAGRAPH_INVALID',
+          '段落不能为空、也不能包含换行（段落增删请走对话流程）'
+        )
+      }
+    }
+    // 只对有文本差异的段产出 kind=text 变更（before/after 齐备：渲染侧词级
+    // 着色与 accept 的 expectedBefore 防线都依赖这两字段）。
+    const changes: AtomicChange[] = []
+    let seq = 0
+    for (const p of editedParagraphs) {
+      const before = paragraphs[p.index]
+      if (before === p.text) continue
+      changes.push({
+        id: `mc-${String(++seq).padStart(3, '0')}`,
+        location: { type: 'paragraph', index: p.index },
+        kind: 'text',
+        before: { text: before },
+        after: { text: p.text },
+        renderHint: 'inline'
+      })
+    }
+    if (changes.length === 0) {
+      return { changeSet: null, changeCount: 0 }
+    }
+    const changeSet: ChangeSet = {
+      id: randomUUID(),
+      toolName: 'manualEdit',
+      status: 'pending',
+      changes,
+      createdAt: new Date().toISOString()
+    }
+    // persistPending 内含 supersede：手动微调顶掉同文件旧 pending（含 AI 的），
+    // 单文件单 pending 约束对来源不敏感。
+    const record = await this.persistPending(changeSet, fileId, null, 'manual')
+    log.info(
+      { event: 'manual-pending', fileId, changeSetId: record.id, changes: changes.length },
+      'manual changeset created'
+    )
+    return { changeSet: record, changeCount: changes.length }
   }
 
   // 渲染层卡片数据源：pending ChangeSet（changes 已 resolve，含外置）+ 文件名合并。
@@ -140,6 +237,7 @@ export class TrustService {
         id: record.id,
         fileId: record.fileId,
         fileName: file?.name ?? '（文件已删除）',
+        source: record.source,
         sourceCommand: record.sourceCommand,
         status: 'pending',
         changes: record.changes == null ? [] : (record.changes as AtomicChange[])
@@ -227,6 +325,7 @@ export class TrustService {
         filePath: file.path,
         changeSetId: id,
         sourceCommand: record.sourceCommand,
+        source: record.source,
         contentHash: applied.contentHash,
         parentVersionId: file.currentVersionId,
         appliedCount: selected.length,

@@ -20,6 +20,20 @@ const KIND_LABEL: Record<AtomicChange['kind'], string> = {
   image: '图片'
 }
 
+// T-S2-05A 来源徽标：ai=AI 对话 / manual=应用内手动微调 / external=外部编辑采纳。
+// Record 穷尽 ChangeSetView['source']，新增来源时 typecheck 强制同步。
+const SOURCE_LABEL: Record<ChangeSetView['source'], string> = {
+  ai: 'AI 对话',
+  manual: '手动微调',
+  external: '外部编辑'
+}
+
+const SOURCE_BADGE: Record<ChangeSetView['source'], string> = {
+  ai: 'bg-accent-soft text-accent-text',
+  manual: 'bg-green-soft text-green',
+  external: 'bg-amber-soft text-amber'
+}
+
 // 与 TrustService.accept 同一判定口径：当前仅支持「paragraph 位置的 text 变更」
 // （word.applyParagraphEdits 确定性重写，架构 §3.4）。UI 不提供无法履行的勾选。
 function isApplicable(change: AtomicChange): boolean {
@@ -84,6 +98,11 @@ export function ChangeSetCard({ view, busy, onAccept, onReject }: ChangeSetCardP
           title={view.sourceCommand ?? undefined}
         >
           变更集 · {view.fileName}
+        </span>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${SOURCE_BADGE[view.source]}`}
+        >
+          {SOURCE_LABEL[view.source]}
         </span>
         <span className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px] text-text-muted">
           {kindPill}

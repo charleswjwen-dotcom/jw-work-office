@@ -81,6 +81,25 @@ export interface IpcApi {
   getVersionDiff: (versionId: string) => Promise<VersionDiffResult>
   // 恢复到指定版本：原子替换工作文件 + 新建反向 ChangeSet + 生成回溯后快照版本。
   restoreVersion: (versionId: string) => Promise<RestoreResult>
+  // —— T-S2-05A 手动优化反馈闭环（PRD 2A.6 / 架构 §5.1）——
+  // 读取工作文件当前段落（右栏手动微调面板数据源）。
+  getParagraphs: (fileId: string) => Promise<ParagraphsResult>
+  // 应用内手动微调（第 1 层）：段落级文本替换产出 source=manual 的标准
+  // ChangeSet，走与 AI 相同的信任流程（架构 §5.1「单一事实源」）。
+  createManualChangeset: (
+    fileId: string,
+    editedParagraphs: { index: number; text: string }[]
+  ) => Promise<ManualCreateResult>
+  // 外部编辑感知（第 2 层）：列出当前检出项（磁盘内容已偏离基线）。
+  listExternalDetections: () => Promise<ExternalDetectionView[]>
+  // 外部改动 vs 当前版本快照的段落级 diff 预览。
+  getExternalDiff: (fileId: string) => Promise<ExternalDiffResult>
+  // 采纳外部编辑为新基线：ChangeSet(source=external) + Version(author=external)。
+  acceptExternalChange: (fileId: string) => Promise<ExternalAcceptResult>
+  // 忽略外部编辑：仅推进基线（contentHash/size/modifiedAt），不落版本记录。
+  ignoreExternalChange: (fileId: string) => Promise<ExternalIgnoreResult>
+  // 手动触发一次全量扫描（fs.watch 降级时的兜底）。
+  scanExternalChanges: () => Promise<ExternalDetectionView[]>
 }
 
 // ChangeSet 的渲染视图（T-S2-05）：渲染层只拿展示所需的窄字段，不暴露
@@ -89,6 +108,8 @@ export interface ChangeSetView {
   id: string
   fileId: string
   fileName: string
+  // 变更来源（T-S2-05A）：ai=AI 对话 / manual=应用内手动微调 / external=外部编辑采纳。
+  source: 'ai' | 'manual' | 'external'
   // 触发本次修改的对话指令（卡片头部展示；M1 冻结无 toolName 列，以此近似）。
   sourceCommand: string | null
   status: 'pending'
@@ -144,5 +165,54 @@ export interface RestoreResult {
   versionId?: string
   changeSetId?: string
   appliedCount?: number
+  contentHash?: string
+}
+
+// —— T-S2-05A 手动微调 / 外部编辑感知结果类型（与既有扁平错误风格一致，§3.1）——
+
+// getParagraphs：成功带非空段落数组（与 splitParagraphs 同一过滤规则）。
+export interface ParagraphsResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  paragraphs?: string[]
+}
+
+// createManualChangeset：成功带新 ChangeSet id 与实际变更数
+// （无文本差异时 changeCount=0 且不落库）。
+export interface ManualCreateResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  changeSetId?: string
+  changeCount?: number
+}
+
+// 外部编辑检出视图（PRD 2A.6 第 2 层）：磁盘 mtime 已越过基线且
+// contentHash 不一致。stalePendingCount 为该文件被置 stale 的变更集数
+// （重启安全——从 DB 计数而非内存态）。
+export interface ExternalDetectionView {
+  fileId: string
+  fileName: string
+  diskModifiedAt: number
+  baselineModifiedAt: number
+  stalePendingCount: number
+}
+
+export interface ExternalDiffResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  changes?: AtomicChange[]
+}
+
+export interface ExternalAcceptResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  versionId?: string
+  changeSetId?: string
+  contentHash?: string
+}
+
+export interface ExternalIgnoreResult {
+  ok: boolean
+  error?: { code: string; message: string }
   contentHash?: string
 }

@@ -1,19 +1,21 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDatabase, type DbHandle } from '../db/connection'
 import { DataService } from '../db/data-service'
+import { copyFileAtomicSync } from '../db/atomic-write'
 import { CHANGES_EXTERNAL_THRESHOLD } from '../db/recovery'
 import type {
   ChangeSetRecord,
   DbRequestMap,
   DbRequestType,
-  FileRecord
+  FileRecord,
+  VersionRecord
 } from '../../shared/db-protocol'
 import type { FileRequestMap, FileRequestType } from '../../shared/file-protocol'
 import type { AtomicChange, ChangeSet } from '../../shared/agent'
-import { parseWordFile } from '../files/word-parser'
+import { parseWordFile, splitParagraphs } from '../files/word-parser'
 import { applyParagraphEdits } from '../files/word-writer'
 import { makeDocx } from '../files/__fixtures__/make-docx'
 import { importWordFile } from '../import/import-service'
@@ -25,6 +27,7 @@ import { createReplaceTextTool } from '../tools/replace-text-tool'
 import { DocumentSession } from '../agent/document-session'
 import { AgentService } from '../agent/agent-service'
 import { TrustService } from './trust-service'
+import { VersionService } from './version-service'
 
 // T-S2-05 信任流集成测试：真实 SQLite + 真实 mammoth/JSZip + MockChatProvider，
 // 跑通「Agent 产出 pending → 落库（含 supersede）→ diff 预览数据 → 用户分支
@@ -38,6 +41,7 @@ import { TrustService } from './trust-service'
 let workDir: string
 let handle: DbHandle
 let service: DataService
+let snapshotsDir: string
 
 const WS = 'ws-test'
 
@@ -81,6 +85,13 @@ function dbAdapter() {
           const p = payload as { id: string; status: ChangeSetRecord['status'] }
           return service.changeSets.updateStatus(p.id, p.status) as never
         }
+        // T-S2-05A buildVersionedStack 需要：accept(manual) 的 onApplied 快照链路。
+        case 'version.create':
+          return service.versions.create(payload as VersionRecord) as never
+        case 'version.listByFile':
+          return service.versions.listByFile((payload as { fileId: string }).fileId) as never
+        case 'version.get':
+          return service.versions.get((payload as { id: string }).id) as never
         default:
           throw new Error(`unexpected db request in test: ${type}`)
       }
@@ -104,6 +115,17 @@ function fileAdapter() {
           edits: Parameters<typeof applyParagraphEdits>[1]
         }
         return (await applyParagraphEdits(p.sourcePath, p.edits)) as never
+      }
+      // 与 files/worker.ts 同一实现：splitParagraphs 唯一规则源切段。
+      if (type === 'word.parseParagraphs') {
+        const p = payload as { sourcePath: string }
+        const parsed = await parseWordFile(p.sourcePath)
+        return { paragraphs: splitParagraphs(parsed.text) } as never
+      }
+      // 与 files/worker.ts 同一实现：.tmp→fsync→rename 原子复制。
+      if (type === 'file.copy') {
+        const p = payload as { sourcePath: string; destPath: string }
+        return { byteSize: copyFileAtomicSync(p.sourcePath, p.destPath) } as never
       }
       throw new Error(`unexpected file request in test: ${type}`)
     }
@@ -151,12 +173,44 @@ function makeChangeSet(id: string, changes: AtomicChange[]): ChangeSet {
   }
 }
 
+// T-S2-05A 手动微调用栈：TrustService + VersionService——accept(source=manual)
+// 走 author='user' 的版本快照（验收：手动优化同样进版本快照可回退）。
+// 既有 buildStack（无 version 依赖）保持原样，上方 AI 用例行为不变。
+function buildVersionedStack() {
+  const versionService = new VersionService({
+    dbPort: dbAdapter(),
+    filePort: fileAdapter(),
+    snapshotsDir
+  })
+  const trustService = new TrustService({
+    dbPort: dbAdapter(),
+    filePort: fileAdapter(),
+    version: versionService
+  })
+  return { trustService, versionService }
+}
+
+function currentVersionIdOf(fileId: string): string {
+  const id = service.files.get(fileId)?.currentVersionId
+  expect(id).toBeTruthy()
+  return id as string
+}
+
+function versionAt(id: string | null | undefined): VersionRecord {
+  expect(id).toBeTruthy()
+  const record = service.versions.get(id as string)
+  expect(record).toBeTruthy()
+  return record as VersionRecord
+}
+
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), 'mwo-trust-'))
   handle = openDatabase(join(workDir, 'test.db'))
+  snapshotsDir = join(workDir, 'snapshots')
+  mkdirSync(snapshotsDir)
   service = new DataService({
     handle,
-    dirs: { tmpDir: join(workDir, 'tmp'), changesetDir: workDir }
+    dirs: { tmpDir: join(workDir, 'tmp'), changesetDir: workDir, snapshotsDir }
   })
   service.workspaces.ensure(WS, 'Test WS')
 })
@@ -396,5 +450,183 @@ describe('TrustService 信任流（T-S2-05 验收）', () => {
     // 两条失败分支都不动文件
     const disk = await parseWordFile(imp.file.path)
     expect(disk.text).toContain('错误分支测试段落')
+  })
+})
+
+// T-S2-05A 第 1 层：应用内手动微调（PRD 2A.6）。createManualPending 的口径是
+// 「全量段落提交」——输入即编辑器当前全文，与磁盘基线逐段比对，仅差异段产出
+// kind=text 变更；source=manual 的 pending 走与 AI 变更完全相同的信任流程
+// （架构 §5.1「单一事实源」，无手动专用路径）。
+describe('createManualPending 手动微调（T-S2-05A 第 1 层）', () => {
+  it('全链路：微调产出 manual ChangeSet → accept → author=user 版本快照 → 回退到旧版本', async () => {
+    const imp = await importDocx('manual.docx', [
+      '手动第一段原样。',
+      '手动第二段待修改。',
+      '手动第三段原样。'
+    ])
+    const { trustService, versionService } = buildVersionedStack()
+
+    const res = await trustService.createManualPending(imp.file.id, [
+      { index: 0, text: '手动第一段原样。' },
+      { index: 1, text: '手动第二段被用户改写。' },
+      { index: 2, text: '手动第三段原样。' }
+    ])
+    expect(res.changeCount).toBe(1)
+    expect(res.changeSet?.id).toBeTruthy()
+
+    const views = await trustService.listPendingViews()
+    expect(views).toHaveLength(1)
+    const view = views[0]
+    expect(view.source).toBe('manual')
+    expect(view.sourceCommand).toBeNull()
+    expect(view.changes[0]).toMatchObject({
+      id: 'mc-001',
+      location: { type: 'paragraph', index: 1 },
+      kind: 'text',
+      before: { text: '手动第二段待修改。' },
+      after: { text: '手动第二段被用户改写。' },
+      renderHint: 'inline'
+    })
+
+    const record = service.changeSets.get(view.id)
+    expect(record?.source).toBe('manual')
+    expect(record?.updatedBy).toBe('user')
+
+    // 接受前红线：磁盘原文未被静默改动
+    expect((await parseWordFile(imp.file.path)).text).toContain('手动第二段待修改。')
+
+    const applied = await trustService.accept(view.id)
+    expect(applied.ok).toBe(true)
+    expect(applied.status).toBe('applied')
+    expect(applied.appliedCount).toBe(1)
+    const disk = await parseWordFile(imp.file.path)
+    expect(disk.text).toContain('手动第二段被用户改写。')
+    expect(disk.text).not.toContain('手动第二段待修改。')
+    expect(service.files.get(imp.file.id)?.contentHash).toBe(applied.contentHash)
+
+    // 手动优化同样进版本快照（验收标准）：author=user、changeSet 关联、字节级快照
+    const v1 = versionAt(currentVersionIdOf(imp.file.id))
+    expect(v1.seq).toBe(1)
+    expect(v1.author).toBe('user')
+    expect(v1.changeSummary).toBe('手动修改 1/1 项')
+    expect(v1.changeSetId).toBe(view.id)
+    expect(readFileSync(v1.snapshotPath as string).equals(readFileSync(imp.file.path))).toBe(true)
+
+    // 第二轮微调 → v2：线性递增、parent 指向 v1
+    const res2 = await trustService.createManualPending(imp.file.id, [
+      { index: 0, text: '手动第一段原样。' },
+      { index: 1, text: '手动第二段被用户改写。' },
+      { index: 2, text: '手动第三段也改了。' }
+    ])
+    expect(res2.changeCount).toBe(1)
+    const views2 = await trustService.listPendingViews()
+    expect(views2).toHaveLength(1)
+    await trustService.accept(views2[0].id)
+    const v2 = versionAt(currentVersionIdOf(imp.file.id))
+    expect(v2.seq).toBe(2)
+    expect(v2.parentVersionId).toBe(v1.id)
+
+    // 可回退（验收标准）：restore(v1) 原子换回旧快照 + 反向 ChangeSet 可审计
+    const payload = await versionService.restore(v1.id)
+    expect(payload.appliedCount).toBe(1)
+    expect(service.getResolvedChangeSet(payload.changeSetId)?.sourceCommand).toBe('恢复到版本 v1')
+    const restored = await parseWordFile(imp.file.path)
+    expect(restored.text).toContain('手动第二段被用户改写。')
+    expect(restored.text).not.toContain('手动第三段也改了。')
+    expect(readFileSync(imp.file.path).equals(readFileSync(v1.snapshotPath as string))).toBe(true)
+  })
+
+  it('无差异：changeSet=null、changeCount=0、不落库', async () => {
+    const imp = await importDocx('same.docx', ['内容没有任何变化'])
+    const { trustService } = buildVersionedStack()
+
+    const res = await trustService.createManualPending(imp.file.id, [
+      { index: 0, text: '内容没有任何变化' }
+    ])
+    expect(res).toEqual({ changeSet: null, changeCount: 0 })
+    expect(await trustService.listPendingViews()).toEqual([])
+    expect(service.changeSets.listPending()).toHaveLength(0)
+  })
+
+  it('输入校验：段落数不匹配 / 索引越界 / 重复索引 → 拒绝且不落库、文件不动', async () => {
+    const imp = await importDocx('invalid.docx', ['校验第一段', '校验第二段', '校验第三段'])
+    const { trustService } = buildVersionedStack()
+    const bytesBefore = readFileSync(imp.file.path)
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [{ index: 0, text: '只提交了一段' }])
+    ).rejects.toMatchObject({ code: 'MANUAL_PARAGRAPH_COUNT_MISMATCH' })
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [
+        { index: 0, text: '校验第一段' },
+        { index: 99, text: '越界段落' },
+        { index: 2, text: '校验第三段' }
+      ])
+    ).rejects.toMatchObject({ code: 'MANUAL_PARAGRAPH_INVALID' })
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [
+        { index: 0, text: '校验第一段' },
+        { index: 0, text: '重复索引' },
+        { index: 2, text: '校验第三段' }
+      ])
+    ).rejects.toMatchObject({ code: 'MANUAL_PARAGRAPH_INVALID' })
+
+    await expect(
+      trustService.createManualPending('no-such-file', [{ index: 0, text: '任意' }])
+    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+
+    expect(await trustService.listPendingViews()).toEqual([])
+    expect(readFileSync(imp.file.path).equals(bytesBefore)).toBe(true)
+  })
+
+  it('空段/含换行：拒绝（段落增删请走对话流程），不落库', async () => {
+    const imp = await importDocx('newline.docx', ['单段文档'])
+    const { trustService } = buildVersionedStack()
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [{ index: 0, text: '' }])
+    ).rejects.toMatchObject({ code: 'MANUAL_PARAGRAPH_INVALID' })
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [{ index: 0, text: '第一行\n第二行' }])
+    ).rejects.toMatchObject({ code: 'MANUAL_PARAGRAPH_INVALID' })
+
+    expect(await trustService.listPendingViews()).toEqual([])
+  })
+
+  it('supersede：手动微调顶掉同文件 AI pending（单文件单 pending 对来源不敏感）', async () => {
+    const imp = await importDocx('super-manual.docx', ['顶替前的段落'])
+    const { trustService } = buildVersionedStack()
+
+    await trustService.persistPending(
+      makeChangeSet('cs-ai-old', [textChange('c1', 0, '顶替前的段落', 'AI 的改写')]),
+      imp.file.id,
+      'AI 指令'
+    )
+
+    const res = await trustService.createManualPending(imp.file.id, [
+      { index: 0, text: '手动改写' }
+    ])
+    expect(res.changeCount).toBe(1)
+    const manualId = res.changeSet?.id as string
+
+    const pending = service.changeSets.listPending()
+    expect(pending.map((r) => r.id)).toEqual([manualId])
+    expect(pending[0]?.source).toBe('manual')
+    expect(service.changeSets.get('cs-ai-old')?.status).toBe('discarded')
+  })
+
+  it('BASELINE_MISMATCH：磁盘已被外部改写 → 拒绝微调（先处理外部改动，不基于失真基线产出 diff）', async () => {
+    const imp = await importDocx('mismatch.docx', ['微调基线测试段落'])
+    const { trustService } = buildVersionedStack()
+
+    writeFileSync(imp.file.path, await makeDocx(['被外部改写的内容。']))
+
+    await expect(
+      trustService.createManualPending(imp.file.id, [{ index: 0, text: '想直接微调' }])
+    ).rejects.toMatchObject({ code: 'BASELINE_MISMATCH' })
+    expect(await trustService.listPendingViews()).toEqual([])
   })
 })
