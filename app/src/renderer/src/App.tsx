@@ -6,6 +6,7 @@ import { ChangeSetCard } from '@renderer/components/chat/ChangeSetCard'
 import { VersionHistoryPanel } from '@renderer/components/chat/VersionHistoryPanel'
 import { ExternalChangePanel } from '@renderer/components/chat/ExternalChangePanel'
 import { ManualEditPanel } from '@renderer/components/chat/ManualEditPanel'
+import { ModelConfigPanel } from '@renderer/components/settings/ModelConfigPanel'
 import { useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
 import type { FileRecord } from '@shared/db-protocol'
@@ -42,6 +43,8 @@ function App(): React.JSX.Element {
   // 手动微调面板重挂载序号（T-S2-05A）：提交成功时 +1，以 key 重挂载清空
   // 草稿（与 VersionHistoryPanel 切换文件重挂载的模式同源）。
   const [manualResetSeq, setManualResetSeq] = useState(0)
+  // 模型设置面板（T-S2-07）：多模型配置入口，密钥加解密全部在主进程闭环。
+  const [modelPanelOpen, setModelPanelOpen] = useState(false)
   const bubbleSeq = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -340,6 +343,9 @@ function App(): React.JSX.Element {
           <Button variant="ghost" size="sm" onClick={toggleRight}>
             {layout.rightCollapsed ? '展开右栏' : '折叠右栏'}
           </Button>
+          <Button variant="ghost" size="sm" onClick={() => setModelPanelOpen(true)}>
+            模型设置
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -566,6 +572,8 @@ function App(): React.JSX.Element {
           </div>
         </section>
       </main>
+
+      <ModelConfigPanel open={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
 
       {undo && (
         <div

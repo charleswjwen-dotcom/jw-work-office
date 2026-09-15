@@ -76,6 +76,20 @@ export interface SearchHit {
   rank: number
 }
 
+// —— T-S2-07 多模型配置（架构 §4 model_configs 表）——
+// 行内只存 apiKeyRef 引用（指向 KeyStore 的 key-<uuid>），密文在
+// {userData}/secure/api-keys.json——明文既不进 DB，也不出主进程（PRD 7A.2）。
+export interface ModelConfigRecord {
+  id: string
+  name: string
+  // M1 冻结：仅 'openai-compatible'（HLD §3.5，OpenAI 兼容端点含 Ollama/vLLM）。
+  protocol: string
+  baseUrl: string | null
+  model: string
+  apiKeyRef: string | null
+  isDefault: boolean
+}
+
 export type DbRequestMap = {
   'db.ready': { request: undefined; response: { ok: true } }
   'workspace.ensure': {
@@ -170,6 +184,19 @@ export type DbRequestMap = {
       cleanedSnapshots: number
     }
   }
+  // —— T-S2-07 多模型配置 CRUD（ModelConfigService 经 DbClient 调用）——
+  // delete 依赖 usage_records.model_id 的 FK cascade 一并清理用量行。
+  'modelConfig.create': { request: ModelConfigRecord; response: ModelConfigRecord }
+  'modelConfig.get': { request: { id: string }; response: ModelConfigRecord | null }
+  'modelConfig.list': { request: undefined; response: ModelConfigRecord[] }
+  'modelConfig.update': {
+    request: { id: string; patch: Partial<ModelConfigRecord> }
+    response: ModelConfigRecord | null
+  }
+  'modelConfig.delete': { request: { id: string }; response: { deleted: number } }
+  'modelConfig.getDefault': { request: undefined; response: ModelConfigRecord | null }
+  // setDefault 在 DB 事务内先清全部默认再置目标，避免双默认中间态。
+  'modelConfig.setDefault': { request: { id: string }; response: ModelConfigRecord | null }
 }
 
 export type DbRequestType = keyof DbRequestMap

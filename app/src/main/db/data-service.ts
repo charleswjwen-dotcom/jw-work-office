@@ -8,6 +8,7 @@ import {
   ChangeSetRepository,
   ConversationRepository,
   FileRepository,
+  ModelConfigRepository,
   VersionRepository,
   WorkspaceRepository
 } from './repositories'
@@ -25,6 +26,8 @@ export class DataService {
   readonly changeSets: ChangeSetRepository
   readonly conversations: ConversationRepository
   readonly search: SearchRepository
+  // T-S2-07 多模型配置：行内只存 apiKeyRef 引用，密钥经 KeyStoreService。
+  readonly modelConfigs: ModelConfigRepository
 
   private readonly handle: DbHandle
   private readonly dirs: RecoveryDirs
@@ -38,6 +41,7 @@ export class DataService {
     this.changeSets = new ChangeSetRepository(handle.db)
     this.conversations = new ConversationRepository(handle.db)
     this.search = new SqliteFtsSearchRepository(handle.raw)
+    this.modelConfigs = new ModelConfigRepository(handle.db)
   }
 
   createChangeSet(record: ChangeSetRecord): ChangeSetRecord {

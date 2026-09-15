@@ -26,7 +26,13 @@ const api: IpcApi = {
   getExternalDiff: (fileId) => ipcRenderer.invoke('external:getDiff', fileId),
   acceptExternalChange: (fileId) => ipcRenderer.invoke('external:accept', fileId),
   ignoreExternalChange: (fileId) => ipcRenderer.invoke('external:ignore', fileId),
-  scanExternalChanges: () => ipcRenderer.invoke('external:scan')
+  scanExternalChanges: () => ipcRenderer.invoke('external:scan'),
+  // —— T-S2-07 模型配置与密钥管理（渲染层只拿掩码视图）——
+  listModelConfigs: () => ipcRenderer.invoke('model:list'),
+  saveModelConfig: (input) => ipcRenderer.invoke('model:save', input),
+  deleteModelConfig: (id) => ipcRenderer.invoke('model:delete', id),
+  setDefaultModelConfig: (id) => ipcRenderer.invoke('model:setDefault', id),
+  getProviderStatus: () => ipcRenderer.invoke('model:status')
 }
 
 if (process.contextIsolated) {

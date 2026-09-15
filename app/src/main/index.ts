@@ -16,6 +16,11 @@ import { AgentService } from './agent/agent-service'
 import { TrustService } from './trust/trust-service'
 import { VersionService } from './trust/version-service'
 import { ExternalWatchService } from './trust/external-watch'
+import { KeyStoreService } from './security/key-store'
+import { SafeStorageCrypto } from './security/safe-storage-crypto'
+import { ModelConfigService } from './llm/model-config-service'
+import type { ProviderStorePort } from './llm/provider-factory'
+import type { ProviderStatusView, SaveModelConfigInput } from '../shared/ipc'
 
 const log = createLogger('main')
 
@@ -30,10 +35,47 @@ let agentService: AgentService | null = null
 let trustService: TrustService | null = null
 let versionService: VersionService | null = null
 let externalWatch: ExternalWatchService | null = null
+// T-S2-07：gateway 由局部变量提升为模块级——配置保存/设默认/删除后
+// refreshProvider 热替换 Provider，新配置下一轮对话即生效，无需重启。
+let gateway: LlmGateway | null = null
+let keyStore: KeyStoreService | null = null
+let modelConfigService: ModelConfigService | null = null
+// 初始值 = 启动解析前的诚实降级态（initDataLayer 完成后被真实状态覆盖）。
+let providerStatus: ProviderStatusView = { mode: 'mock', note: null, encryptionAvailable: false }
 
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
+}
+
+// Provider 解析链的 DB+密钥端口（provider-factory 的注入点）：
+// 启动装配与 refreshProvider 共用同一端口，保证两条路径优先级链一致（§3.6）。
+function makeProviderStore(): ProviderStorePort {
+  return {
+    getDefaultConfig: async () =>
+      (await dbClient?.request('modelConfig.getDefault', undefined)) ?? null,
+    decryptKey: (ref) => keyStore?.getKey(ref) ?? null
+  }
+}
+
+// 配置变更后热替换 Provider：重跑解析链（env → DB 默认配置 → Mock 诚实降级），
+// 成功则 swap 并刷新状态徽章；失败保留旧 Provider 只告警（不中断对话）。
+async function refreshProvider(): Promise<void> {
+  if (!gateway || !keyStore) return
+  try {
+    const resolved = await resolveChatProvider(makeProviderStore())
+    gateway.swapProvider(resolved.provider)
+    providerStatus = {
+      mode: resolved.mode,
+      note: resolved.note ?? null,
+      encryptionAvailable: keyStore.available()
+    }
+  } catch (err) {
+    log.warn(
+      { event: 'provider-refresh-failed', err: err instanceof Error ? err.message : String(err) },
+      'provider refresh failed, keeping previous provider'
+    )
+  }
 }
 
 async function initDataLayer(): Promise<void> {
@@ -75,14 +117,23 @@ async function initDataLayer(): Promise<void> {
     'data layer ready, crash recovery done'
   )
 
+  // === T-S2-07 密钥存储与模型配置服务（PRD 7A.2 / 架构 §3.6）===
+  // safeStorage 加解密严格限定主进程；密文（base64）原子落
+  // {userData}/secure/api-keys.json，DB 的 model_configs 只存 key-<uuid> 引用。
+  const secureDir = ensureDir(join(userData, 'secure'))
+  keyStore = new KeyStoreService({ secureDir, crypto: new SafeStorageCrypto() })
+  modelConfigService = new ModelConfigService({ dbPort: dbClient, keyStore })
+
   // === Agent 栈装配（T-S2-04，架构 §3.1/§3.5）===
   // Provider（真实 OpenAI 兼容或 Mock 诚实降级，见 provider-factory）→ Gateway
   // （重试/超时/用量计量，共享 UsageMeter 账本）→ Tool Registry（replaceText
   // 绑定 DocumentSession 的段落解析）→ AgentService（每轮编排）。
   // 必须在数据层就绪后装配：DocumentSession 依赖 db/file 两个客户端。
-  const resolved = resolveChatProvider()
+  // T-S2-07：resolveChatProvider 为 async——env 缺失时走 DB 默认配置 +
+  // KeyStore 主进程解密（§3.6），共享 UsageMeter 账本跨热替换保留（§3.5）。
+  const resolved = await resolveChatProvider(makeProviderStore())
   const usageMeter = new UsageMeter(resolved.provider.id)
-  const gateway = new LlmGateway(resolved.provider, { usage: usageMeter })
+  gateway = new LlmGateway(resolved.provider, { usage: usageMeter })
   const session = new DocumentSession({ dbClient, fileClient })
   const registry = new ToolRegistry()
   registry.register(createReplaceTextTool(session.resolveParagraph))
@@ -97,6 +148,11 @@ async function initDataLayer(): Promise<void> {
   })
   trustService = new TrustService({ dbPort: dbClient, filePort: fileClient, version: versionService })
   agentService = new AgentService({ gateway, registry, session, trust: trustService })
+  providerStatus = {
+    mode: resolved.mode,
+    note: resolved.note ?? null,
+    encryptionAvailable: keyStore.available()
+  }
   log.info(
     { event: 'agent-ready', providerMode: resolved.mode, note: resolved.note },
     'agent stack ready'
@@ -372,6 +428,65 @@ app.whenReady().then(() => {
     if (!externalWatch) return []
     return externalWatch.scan()
   })
+
+  // === T-S2-07 模型配置通道（PRD 7A.2 / 架构 §3.6）===
+  // 密钥明文只在主进程存续：list/setDefault 返回掩码视图；save/delete 后
+  // refreshProvider 热替换 Provider 使新配置下一轮对话即生效。
+  // 错误规范与信任流一致：Error('CODE: message') → toTrustError 降级。
+  ipcMain.handle('model:list', async () => {
+    if (!modelConfigService) return []
+    return modelConfigService.listViews()
+  })
+
+  ipcMain.handle('model:save', async (_e, input: SaveModelConfigInput) => {
+    if (!modelConfigService) {
+      return {
+        ok: false,
+        error: { code: 'MODEL_CONFIG_NOT_READY', message: '模型配置服务未就绪' }
+      }
+    }
+    try {
+      const config = await modelConfigService.save(input)
+      await refreshProvider()
+      return { ok: true, config }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('model:delete', async (_e, id: string) => {
+    if (!modelConfigService) {
+      return {
+        ok: false,
+        error: { code: 'MODEL_CONFIG_NOT_READY', message: '模型配置服务未就绪' }
+      }
+    }
+    try {
+      await modelConfigService.remove(id)
+      await refreshProvider()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('model:setDefault', async (_e, id: string) => {
+    if (!modelConfigService) {
+      return {
+        ok: false,
+        error: { code: 'MODEL_CONFIG_NOT_READY', message: '模型配置服务未就绪' }
+      }
+    }
+    try {
+      const config = await modelConfigService.setDefault(id)
+      await refreshProvider()
+      return { ok: true, config }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('model:status', () => providerStatus)
 
   createWindow()
 

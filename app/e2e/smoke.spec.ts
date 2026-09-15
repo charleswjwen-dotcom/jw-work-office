@@ -330,9 +330,7 @@ test('external:accept 通道可用：未知文件返回结构化 FILE_NOT_FOUND'
       async () =>
         window.evaluate(async () => {
           const api = (
-            window as unknown as {
-              api?: { acceptExternalChange?: (fileId: string) => Promise<unknown> }
-            }
+            window as unknown as { api?: { acceptExternalChange?: (fileId: string) => Promise<unknown> } }
           ).api
           if (!api?.acceptExternalChange) return 'NO_BRIDGE'
           try {
@@ -349,4 +347,103 @@ test('external:accept 通道可用：未知文件返回结构化 FILE_NOT_FOUND'
       { timeout: 15000, intervals: [250, 500, 1000] }
     )
     .toBe('FILE_NOT_FOUND')
+})
+
+// T-S2-07 冒烟：模型配置三通道（架构 §3.6 密钥管理 / PRD 7A.2 隐私红线）。
+// list 与 status 是「读视图」通道：渲染层只拿窄字段视图（hasKey/maskedKey），
+// 明文密钥永不出主进程。status 结构断言而非值断言：mode 受宿主 env（CI 可配
+// MWO_LLM_*）与本地配置影响，两值皆合法。save 用空名称走校验失败路径——
+// 验证 MODEL_CONFIG_INVALID 结构化错误契约且不写入任何数据。
+test('model:list 通道可用：返回数组（窄字段视图）', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as { api?: { listModelConfigs?: () => Promise<unknown[]> } }
+          ).api
+          if (!api?.listModelConfigs) return 'NO_BRIDGE'
+          try {
+            const views = await api.listModelConfigs()
+            return Array.isArray(views) ? 'ARRAY' : 'NOT_ARRAY'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('ARRAY')
+})
+
+test('model:status 通道可用：返回结构完整的 ProviderStatusView', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as { api?: { getProviderStatus?: () => Promise<unknown> } }
+          ).api
+          if (!api?.getProviderStatus) return 'NO_BRIDGE'
+          try {
+            const status = (await api.getProviderStatus()) as {
+              mode?: unknown
+              note?: unknown
+              encryptionAvailable?: unknown
+            }
+            if (status.mode !== 'openai-compatible' && status.mode !== 'mock') {
+              return 'BAD_MODE'
+            }
+            if (typeof status.encryptionAvailable !== 'boolean') return 'BAD_ENCRYPTION_FLAG'
+            if (!(status.note === null || typeof status.note === 'string')) return 'BAD_NOTE'
+            return 'OK'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('OK')
+})
+
+test('model:save 通道可用：空名称返回结构化 MODEL_CONFIG_INVALID', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: {
+                saveModelConfig?: (input: {
+                  name: string
+                  protocol: string
+                  model: string
+                }) => Promise<unknown>
+              }
+            }
+          ).api
+          if (!api?.saveModelConfig) return 'NO_BRIDGE'
+          try {
+            const result = (await api.saveModelConfig({
+              name: '   ',
+              protocol: 'openai-compatible',
+              model: 'any'
+            })) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('MODEL_CONFIG_INVALID')
 })

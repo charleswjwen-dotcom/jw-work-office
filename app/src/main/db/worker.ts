@@ -3,7 +3,8 @@ import type {
   DbRequest,
   DbRequestType,
   DbResponse,
-  FileRecord
+  FileRecord,
+  ModelConfigRecord
 } from '../../shared/db-protocol'
 import { openDatabase } from './connection'
 import { DataService } from './data-service'
@@ -92,6 +93,23 @@ function handle(req: DbRequest): unknown {
     }
     case 'recovery.run':
       return service.runRecovery()
+    // —— T-S2-07 多模型配置 CRUD ——
+    case 'modelConfig.create':
+      return service.modelConfigs.create(req.payload as ModelConfigRecord)
+    case 'modelConfig.get':
+      return service.modelConfigs.get((req.payload as { id: string }).id)
+    case 'modelConfig.list':
+      return service.modelConfigs.list()
+    case 'modelConfig.update': {
+      const p = req.payload as { id: string; patch: Partial<ModelConfigRecord> }
+      return service.modelConfigs.update(p.id, p.patch)
+    }
+    case 'modelConfig.delete':
+      return { deleted: service.modelConfigs.delete((req.payload as { id: string }).id) }
+    case 'modelConfig.getDefault':
+      return service.modelConfigs.getDefault()
+    case 'modelConfig.setDefault':
+      return service.modelConfigs.setDefault((req.payload as { id: string }).id)
     default: {
       const exhaustive: never = req.type as never
       throw new Error(`Unknown db request type: ${String(exhaustive)}`)

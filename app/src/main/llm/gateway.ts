@@ -38,6 +38,14 @@ export class LlmGateway {
     return this.usage.getUsage()
   }
 
+  // T-S2-07 配置热替换：保存/设默认/删除配置后，主进程重跑解析链
+  // （env → DB 默认配置 → Mock）并注入新 Provider。共享账本（UsageMeter）
+  // 不随 swap 重建——多 Provider 汇总到同一份进程级账本（§3.5），
+  // providerId getter 随之指向新 Provider。
+  swapProvider(provider: ChatProvider): void {
+    this.provider = provider
+  }
+
   // onToken：流式透传（T-S2-06 的 IPC 流式管道将挂在此处）。
   // 已知取舍：流中途失败重试时，token 会重复下发，由未来的 UI 层按消息 id 去重；
   // 本层不缓存重排（保持 Provider→Gateway→UI 的单向流简单性）。

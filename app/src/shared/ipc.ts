@@ -100,6 +100,17 @@ export interface IpcApi {
   ignoreExternalChange: (fileId: string) => Promise<ExternalIgnoreResult>
   // 手动触发一次全量扫描（fs.watch 降级时的兜底）。
   scanExternalChanges: () => Promise<ExternalDetectionView[]>
+  // —— T-S2-07 模型配置与密钥管理（PRD 7A.2 / 架构 §3.6）——
+  // 密钥明文永不出主进程：所有视图只含 hasKey/maskedKey 掩码字段。
+  listModelConfigs: () => Promise<ModelConfigView[]>
+  // 保存配置（id 省略=新建，否则更新）；成功后主进程热替换 Provider。
+  saveModelConfig: (input: SaveModelConfigInput) => Promise<ModelConfigSaveResult>
+  // 删除配置（连带清理密文条目；usage_records 随 FK cascade）。
+  deleteModelConfig: (id: string) => Promise<ModelConfigDeleteResult>
+  // 设为默认（事务保证全局唯一默认位）。
+  setDefaultModelConfig: (id: string) => Promise<ModelConfigSaveResult>
+  // 当前 Provider 状态（mock 降级原因 / safeStorage 可用性），设置面板徽章数据源。
+  getProviderStatus: () => Promise<ProviderStatusView>
 }
 
 // ChangeSet 的渲染视图（T-S2-05）：渲染层只拿展示所需的窄字段，不暴露
@@ -215,4 +226,48 @@ export interface ExternalIgnoreResult {
   ok: boolean
   error?: { code: string; message: string }
   contentHash?: string
+}
+
+// —— T-S2-07 模型配置视图与结果类型（PRD 7A.2 隐私红线）——
+// 渲染层只见掩码：hasKey 表示已配密钥，maskedKey 由主进程解密后取首尾
+// 4 字符生成（≤8 字符只露首 2）。明文/密文/引用 ref 均不跨进程。
+export interface ModelConfigView {
+  id: string
+  name: string
+  protocol: string
+  baseUrl: string | null
+  model: string
+  hasKey: boolean
+  maskedKey: string | null
+  isDefault: boolean
+}
+
+// apiKey 三态语义：省略 = 保持现有密钥 / 空串 = 清除 / 非空 = 覆写。
+export interface SaveModelConfigInput {
+  id?: string
+  name: string
+  protocol: string
+  baseUrl?: string | null
+  model: string
+  apiKey?: string
+  isDefault?: boolean
+}
+
+export interface ModelConfigSaveResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  config?: ModelConfigView
+}
+
+export interface ModelConfigDeleteResult {
+  ok: boolean
+  error?: { code: string; message: string }
+}
+
+// Provider 解析结果的状态视图：mode=mock 时 note 说明降级原因；
+// encryptionAvailable = safeStorage 当前可用性（不可用时禁止录入新密钥）。
+export interface ProviderStatusView {
+  mode: 'openai-compatible' | 'mock'
+  note: string | null
+  encryptionAvailable: boolean
 }

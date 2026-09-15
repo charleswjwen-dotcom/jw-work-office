@@ -4,10 +4,19 @@ import type {
   ConversationRecord,
   FileRecord,
   MessageRecord,
+  ModelConfigRecord,
   VersionRecord
 } from '../../shared/db-protocol'
 import type { Db } from './connection'
-import { changeSets, conversations, files, messages, versions, workspaces } from './schema'
+import {
+  changeSets,
+  conversations,
+  files,
+  messages,
+  modelConfigs,
+  versions,
+  workspaces
+} from './schema'
 
 type FileRow = typeof files.$inferSelect
 type VersionRow = typeof versions.$inferSelect
@@ -94,6 +103,21 @@ function toMessageRecord(row: MessageRow): MessageRecord {
     changeSetId: row.changeSetId,
     resultCards: row.resultCards ?? null,
     createdAt: row.createdAt.getTime()
+  }
+}
+
+// T-S2-07 model_configs 行无时间戳列（HLD §4），行字段与记录字段同名直映。
+type ModelConfigRow = typeof modelConfigs.$inferSelect
+
+function toModelConfigRecord(row: ModelConfigRow): ModelConfigRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    protocol: row.protocol,
+    baseUrl: row.baseUrl,
+    model: row.model,
+    apiKeyRef: row.apiKeyRef,
+    isDefault: row.isDefault
   }
 }
 
@@ -353,5 +377,84 @@ export class ConversationRepository {
       .where(eq(messages.conversationId, conversationId))
       .all()
       .map(toMessageRecord)
+  }
+}
+
+// —— T-S2-07 多模型配置（架构 §4）——
+// 行内只存 apiKeyRef 引用，密文由 KeyStoreService 管理（secure/api-keys.json）。
+export class ModelConfigRepository {
+  constructor(private readonly db: Db) {}
+
+  create(record: ModelConfigRecord): ModelConfigRecord {
+    const row = this.db
+      .insert(modelConfigs)
+      .values({
+        id: record.id,
+        name: record.name,
+        protocol: record.protocol,
+        baseUrl: record.baseUrl,
+        model: record.model,
+        apiKeyRef: record.apiKeyRef,
+        isDefault: record.isDefault
+      })
+      .returning()
+      .get()
+    return toModelConfigRecord(row)
+  }
+
+  get(id: string): ModelConfigRecord | null {
+    const row = this.db.select().from(modelConfigs).where(eq(modelConfigs.id, id)).get()
+    return row ? toModelConfigRecord(row) : null
+  }
+
+  list(): ModelConfigRecord[] {
+    return this.db.select().from(modelConfigs).all().map(toModelConfigRecord)
+  }
+
+  update(id: string, patch: Partial<ModelConfigRecord>): ModelConfigRecord | null {
+    const values: Partial<ModelConfigRow> = {}
+    if (patch.name !== undefined) values.name = patch.name
+    if (patch.protocol !== undefined) values.protocol = patch.protocol
+    if (patch.baseUrl !== undefined) values.baseUrl = patch.baseUrl
+    if (patch.model !== undefined) values.model = patch.model
+    if (patch.apiKeyRef !== undefined) values.apiKeyRef = patch.apiKeyRef
+    if (patch.isDefault !== undefined) values.isDefault = patch.isDefault
+    if (Object.keys(values).length === 0) return this.get(id)
+    const row = this.db
+      .update(modelConfigs)
+      .set(values)
+      .where(eq(modelConfigs.id, id))
+      .returning()
+      .get()
+    return row ? toModelConfigRecord(row) : null
+  }
+
+  delete(id: string): number {
+    // usage_records.model_id FK cascade：删配置一并清理用量行。
+    const result = this.db.delete(modelConfigs).where(eq(modelConfigs.id, id)).run()
+    return result.changes
+  }
+
+  getDefault(): ModelConfigRecord | null {
+    const row = this.db
+      .select()
+      .from(modelConfigs)
+      .where(eq(modelConfigs.isDefault, true))
+      .get()
+    return row ? toModelConfigRecord(row) : null
+  }
+
+  // 事务内先清全部默认再置目标：避免双默认中间态被并发读到。
+  setDefault(id: string): ModelConfigRecord | null {
+    return this.db.transaction((tx) => {
+      tx.update(modelConfigs).set({ isDefault: false }).run()
+      const row = tx
+        .update(modelConfigs)
+        .set({ isDefault: true })
+        .where(eq(modelConfigs.id, id))
+        .returning()
+        .get()
+      return row ? toModelConfigRecord(row) : null
+    })
   }
 }
