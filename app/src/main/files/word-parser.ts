@@ -29,11 +29,19 @@ function countWords(text: string): number {
   return cjk + latin
 }
 
-function pickFirstParagraph(text: string): { heading: string | null; paragraphCount: number } {
-  const paragraphs = text
+// 段落切分的唯一规则源（架构 §3.4 LocationSelector.paragraph）：
+// FTS5 索引、ContextBuilder 展示、ReplaceTextTool 定位三处共用同一套切法，
+// 否则"模型看到的段落号"与"工具操作的段落号"会错位。T-S2-04 的
+// DocumentSession 也从这里取规则，禁止各处自写正则。
+export function splitParagraphs(text: string): string[] {
+  return text
     .split(/\n+/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
+}
+
+function pickFirstParagraph(text: string): { heading: string | null; paragraphCount: number } {
+  const paragraphs = splitParagraphs(text)
   // 启发式标题：文档首个非空段落。这不是 .docx 的真实 Title 属性
   // （真实标题需解析 core.xml，后续可增强），仅作列表辅助展示，不参与检索语义。
   const heading = paragraphs.length > 0 ? paragraphs[0].slice(0, 120) : null

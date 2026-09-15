@@ -1,5 +1,7 @@
-import type { ChatProvider, UsageRecord } from './types'
+import type { ChatProvider } from './types'
+import type { UsageRecord } from './types'
 import type { ChatRequest, ChatCompletion } from '@shared/agent'
+import { UsageMeter } from './usage-meter'
 import { createLogger } from '../logger'
 
 const log = createLogger('llm-gateway')
@@ -7,12 +9,17 @@ const log = createLogger('llm-gateway')
 export interface LlmGatewayOptions {
   maxRetries?: number
   timeoutMs?: number
+  // 外部注入的共享计量器：多个 Gateway（未来多 Provider 并存）可汇总到同一份账本。
+  usage?: UsageMeter
 }
 
+// LlmGateway（架构 §3.5）：Provider 之上的统一策略层——重试、超时、用量计量。
+// 它不理解任何具体协议（OpenAI/Anthropic 差异都留在 Provider 内），
+// Agent 只认识 Gateway，这就是"适配层"的边界。
 export class LlmGateway {
   private provider: ChatProvider
-  private options: Required<LlmGatewayOptions>
-  private usage: UsageRecord
+  private options: { maxRetries: number; timeoutMs: number }
+  private usage: UsageMeter
 
   constructor(provider: ChatProvider, options: LlmGatewayOptions = {}) {
     this.provider = provider
@@ -20,13 +27,7 @@ export class LlmGateway {
       maxRetries: options.maxRetries ?? 2,
       timeoutMs: options.timeoutMs ?? 30_000
     }
-    this.usage = {
-      provider: provider.id,
-      tokensIn: 0,
-      tokensOut: 0,
-      calls: 0,
-      costUsd: 0
-    }
+    this.usage = options.usage ?? new UsageMeter(provider.id)
   }
 
   get providerId(): string {
@@ -34,24 +35,28 @@ export class LlmGateway {
   }
 
   getUsage(): UsageRecord {
-    return { ...this.usage }
+    return this.usage.getUsage()
   }
 
-  async chat(req: ChatRequest): Promise<ChatCompletion> {
+  // onToken：流式透传（T-S2-06 的 IPC 流式管道将挂在此处）。
+  // 已知取舍：流中途失败重试时，token 会重复下发，由未来的 UI 层按消息 id 去重；
+  // 本层不缓存重排（保持 Provider→Gateway→UI 的单向流简单性）。
+  async chat(
+    req: ChatRequest,
+    opts: { onToken?: (token: string) => void } = {}
+  ): Promise<ChatCompletion> {
     let lastErr: unknown
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt += 1) {
       try {
-        const result = await this.withTimeout(this.provider.chat(req))
-        this.recordUsage(req, result)
+        const result = await this.withTimeout(this.provider.chat(req, { onToken: opts.onToken }))
+        this.usage.observe(req, result)
         log.info(
           {
             event: 'llm-chat',
             provider: this.provider.id,
             attempt,
             messageCount: req.messages.length,
-            calls: this.usage.calls,
-            tokensIn: this.usage.tokensIn,
-            tokensOut: this.usage.tokensOut
+            toolCallCount: result.toolCalls.length
           },
           'llm chat completed'
         )
@@ -73,14 +78,6 @@ export class LlmGateway {
     )
   }
 
-  private recordUsage(req: ChatRequest, res: ChatCompletion): void {
-    this.usage.calls += 1
-    this.usage.tokensIn += estimateTokens(
-      req.messages.map((m) => m.content).join(' ')
-    )
-    this.usage.tokensOut += estimateTokens(res.content)
-  }
-
   private async withTimeout<T>(p: Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(
@@ -99,8 +96,4 @@ export class LlmGateway {
       )
     })
   }
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
 }

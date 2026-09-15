@@ -21,18 +21,33 @@ const inputSchema = z.object({
 
 type ReplaceTextInput = z.infer<typeof inputSchema>
 
-export function createReplaceTextTool(
-  getParagraphText: (index: number) => string | undefined
-): Tool<ReplaceTextInput> {
+// 段落解析器：按 (documentId, paragraphIndex) 取当前段落文本。
+// 之所以带 documentId 而非闭包捕获某个文件：Tool 在应用级 Registry 注册一次，
+// 但每轮对话的目标文件不同——冻结契约的 ToolExecuteContext.documentId
+// （@shared/agent.ts）正是为这个"每次执行时绑定目标文档"场景预留的。
+export type ParagraphResolver = (
+  documentId: string | undefined,
+  index: number
+) => string | undefined
+
+export function createReplaceTextTool(resolveParagraph: ParagraphResolver): Tool {
   return {
     name: 'replaceText',
-    description: '在指定段落中把 find 文本替换为 replacement 文本，输出 ChangeSet 供用户确认，不直接修改文件。',
+    description:
+      '在指定段落中把 find 文本替换为 replacement 文本，输出 ChangeSet 供用户确认，不直接修改文件。',
     category: 'deterministic',
     isDestructive: false,
     preview: true,
+    // contextHint（§3.3 覆盖点）：告诉 ContextBuilder"本工具按段落 index 精确操作"，
+    // 请把候选段落（尤其含待替换文本的段落）钉进上下文。字段本身是冻结接口的
+    // 可选项，这里首次给出实际取值，语义见 context-builder.ts。
+    contextHint: {
+      strategy: 'paragraph-exact',
+      note: '按 LocationSelector.paragraph 精确操作，候选段落应整体进入上下文'
+    },
     inputSchema,
     async execute(input: ReplaceTextInput, ctx: ToolExecuteContext): Promise<ChangeSet> {
-      const original = getParagraphText(input.location.index)
+      const original = resolveParagraph(ctx.documentId, input.location.index)
       if (original === undefined) {
         return {
           id: randomUUID(),

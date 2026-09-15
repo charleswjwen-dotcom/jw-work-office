@@ -8,7 +8,8 @@ const api: IpcApi = {
   ping: () => ipcRenderer.invoke('ping'),
   importWord: () => ipcRenderer.invoke('file:importWord'),
   listFiles: (workspaceId) => ipcRenderer.invoke('file:list', workspaceId),
-  searchFiles: (query) => ipcRenderer.invoke('file:search', query)
+  searchFiles: (query) => ipcRenderer.invoke('file:search', query),
+  chatSend: (fileId, prompt) => ipcRenderer.invoke('chat:send', fileId, prompt)
 }
 
 if (process.contextIsolated) {

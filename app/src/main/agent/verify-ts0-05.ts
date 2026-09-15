@@ -28,7 +28,7 @@ function buildAgent(scenarios?: MockScenario[]): {
   const gateway = new LlmGateway(provider)
   const registry = new ToolRegistry()
   registry.register(
-    createReplaceTextTool((index) => doc[index]) as never
+    createReplaceTextTool((_documentId, index) => doc[index]) as never
   )
   return { agent: new Agent(gateway, registry), registry }
 }

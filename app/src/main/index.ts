@@ -6,6 +6,13 @@ import { createLogger } from './logger'
 import { DbClient } from './db/client'
 import { FileClient } from './files/client'
 import { importWordFile } from './import/import-service'
+import { resolveChatProvider } from './llm/provider-factory'
+import { LlmGateway } from './llm/gateway'
+import { UsageMeter } from './llm/usage-meter'
+import { ToolRegistry } from './tools/registry'
+import { createReplaceTextTool } from './tools/replace-text-tool'
+import { DocumentSession } from './agent/document-session'
+import { AgentService } from './agent/agent-service'
 
 const log = createLogger('main')
 
@@ -16,6 +23,7 @@ const DEFAULT_WORKSPACE_ID = 'ws-default'
 let dbClient: DbClient | null = null
 let fileClient: FileClient | null = null
 let filesDir = ''
+let agentService: AgentService | null = null
 
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -56,6 +64,23 @@ async function initDataLayer(): Promise<void> {
       cleanedExternal: recovery.cleanedExternal
     },
     'data layer ready, crash recovery done'
+  )
+
+  // === Agent 栈装配（T-S2-04，架构 §3.1/§3.5）===
+  // Provider（真实 OpenAI 兼容或 Mock 诚实降级，见 provider-factory）→ Gateway
+  // （重试/超时/用量计量，共享 UsageMeter 账本）→ Tool Registry（replaceText
+  // 绑定 DocumentSession 的段落解析）→ AgentService（每轮编排）。
+  // 必须在数据层就绪后装配：DocumentSession 依赖 db/file 两个客户端。
+  const resolved = resolveChatProvider()
+  const usageMeter = new UsageMeter(resolved.provider.id)
+  const gateway = new LlmGateway(resolved.provider, { usage: usageMeter })
+  const session = new DocumentSession({ dbClient, fileClient })
+  const registry = new ToolRegistry()
+  registry.register(createReplaceTextTool(session.resolveParagraph))
+  agentService = new AgentService({ gateway, registry, session })
+  log.info(
+    { event: 'agent-ready', providerMode: resolved.mode, note: resolved.note },
+    'agent stack ready'
   )
 }
 
@@ -153,6 +178,15 @@ app.whenReady().then(() => {
   ipcMain.handle('file:search', async (_e, query: string) => {
     if (!dbClient) return []
     return dbClient.request('search.query', { query })
+  })
+
+  // 对话一轮（T-S2-04）：结构化结果，业务错误走 ChatTurnResult.error 而非 throw，
+  // 渲染层无需 try/catch（§3.1 IPC 错误规范化）。未知 fileId → ok:false + FILE_NOT_FOUND。
+  ipcMain.handle('chat:send', async (_e, fileId: string, prompt: string) => {
+    if (!agentService) {
+      throw new Error('AGENT_NOT_READY')
+    }
+    return agentService.runTurn({ fileId, prompt })
   })
 
   createWindow()
