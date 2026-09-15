@@ -13,6 +13,7 @@ import { ToolRegistry } from './tools/registry'
 import { createReplaceTextTool } from './tools/replace-text-tool'
 import { DocumentSession } from './agent/document-session'
 import { AgentService } from './agent/agent-service'
+import { TrustService } from './trust/trust-service'
 
 const log = createLogger('main')
 
@@ -24,6 +25,7 @@ let dbClient: DbClient | null = null
 let fileClient: FileClient | null = null
 let filesDir = ''
 let agentService: AgentService | null = null
+let trustService: TrustService | null = null
 
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -77,7 +79,10 @@ async function initDataLayer(): Promise<void> {
   const session = new DocumentSession({ dbClient, fileClient })
   const registry = new ToolRegistry()
   registry.register(createReplaceTextTool(session.resolveParagraph))
-  agentService = new AgentService({ gateway, registry, session })
+  // T-S2-05：TrustService 结构化端口直接注入真实 client（request 签名一致），
+  // AgentService 借它把每轮 pending ChangeSet 落库（架构 §5 信任流第 2 步）。
+  trustService = new TrustService({ dbPort: dbClient, filePort: fileClient })
+  agentService = new AgentService({ gateway, registry, session, trust: trustService })
   log.info(
     { event: 'agent-ready', providerMode: resolved.mode, note: resolved.note },
     'agent stack ready'
@@ -187,6 +192,42 @@ app.whenReady().then(() => {
       throw new Error('AGENT_NOT_READY')
     }
     return agentService.runTurn({ fileId, prompt })
+  })
+
+  // === T-S2-05 信任交互通道（架构 §5）===
+  // 与 chat:send 同一错误规范：TrustFlowError(code) 统一降级为 { ok:false, error }，
+  // 渲染层拿结构化结果（CHANGESET_NOT_FOUND / BASELINE_MISMATCH 等）直接可判型。
+  const toTrustError = (err: unknown): { code: string; message: string } => {
+    const message = err instanceof Error ? err.message : String(err)
+    const code = /^([A-Z_]+):/.exec(message)?.[1] ?? 'TRUST_FLOW_FAILED'
+    return { code, message }
+  }
+
+  ipcMain.handle('changeset:listPending', async () => {
+    if (!trustService) return []
+    return trustService.listPendingViews()
+  })
+
+  ipcMain.handle('changeset:accept', async (_e, id: string, acceptedChangeIds?: string[]) => {
+    if (!trustService) {
+      throw new Error('TRUST_NOT_READY')
+    }
+    try {
+      return await trustService.accept(id, acceptedChangeIds)
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('changeset:reject', async (_e, id: string) => {
+    if (!trustService) {
+      throw new Error('TRUST_NOT_READY')
+    }
+    try {
+      return await trustService.reject(id)
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
   })
 
   createWindow()

@@ -52,6 +52,13 @@ function handle(req: DbRequest): unknown {
       const p = req.payload as { id: string; status: ChangeSetRecord['status'] }
       return service.changeSets.updateStatus(p.id, p.status)
     }
+    case 'changeSet.getResolved':
+      return service.getResolvedChangeSet((req.payload as { id: string }).id)
+    case 'changeSet.listPendingResolved':
+      return service.listPendingResolved()
+    case 'changeSet.discard':
+      // 架构 §5 清理顺序：先删外置 changes 文件、再删 DB 行（DataService 内实现）。
+      return service.discardChangeSet((req.payload as { id: string }).id)
     case 'conversation.create':
       return service.conversations.create(req.payload as never)
     case 'message.create':

@@ -35,9 +35,56 @@ export interface WordParseRequestPayload {
   sourcePath: string
 }
 
+// —— Word 段落级写入（T-S2-05 信任交互「确认后写文件」，架构 §5 accept 分支）——
+//
+// 设计意图：
+// - 架构 §3.4 把 mammoth 定位为"转 HTML 预览 / 纯文本抽取"，确定性改写必须走
+//   OOXML 直改（mammoth 不具备无损写回能力）。这里用 JSZip 解包 docx → 定位
+//   document.xml 中的目标 <w:p> → 保留 w:pPr / 首 run 的 w:rPr → 重写正文 →
+//   重打包落盘，保证"应用后文档结构完整"（T-S2-05 验收标准）。
+// - 段落号语义与解析侧严格对齐：splitParagraphs 的"非空段落从 0 计数"是唯一
+//   规则源（word-parser.ts），写入器按同一口径给 <w:p> 建立序号，否则"模型
+//   看到的段落号"与"实际改写的段落"会错位。
+// - expectedBefore 对齐防线（T-S2-05 部分接受/延迟确认的安全闸）：每个编辑项
+//   携带工具产出 ChangeSet 时的段落原文（AtomicChange.before.text），写入器
+//   先校验目标段当前文本一致才落笔，不一致报 WORD_ALIGN_MISMATCH——绝不静默
+//   错位改写（架构 §5.1 原子性约束的写入侧体现）。
+export interface WordParagraphEdit {
+  // 目标段落号（splitParagraphs 语义：非空段从 0 开始计数）。
+  index: number
+  // 替换后的整段文本（AtomicChange.after.text）。
+  text: string
+  // 写入前对齐校验：目标段当前文本必须与该值一致（AtomicChange.before.text）。
+  // 省略时跳过校验（仅供测试与内部维护通道，信任流恒携带该值）。
+  expectedBefore?: string
+}
+
+export interface WordApplyParagraphEditsPayload {
+  // 源 .docx 的绝对路径（就地原子改写：写 .tmp → fsync → rename）。
+  sourcePath: string
+  // 段落编辑项集合。index 不得重复；写入在同一次重打包内完成。
+  edits: WordParagraphEdit[]
+}
+
+export interface WordApplyParagraphEditsResult {
+  // 写入后重解析的新正文哈希。accept 后由信任流用该值刷新 files.content_hash
+  // 基线（架构 §2A.6 基线一致性），使后续轮次的编辑基线与磁盘事实同步。
+  contentHash: string
+  // 写入后文档的非空段落数。
+  paragraphCount: number
+  // 写入后文件字节数。
+  byteSize: number
+  // 写入完成时间（ISO 8601）。
+  modifiedAt: string
+}
+
 export type FileRequestMap = {
   'file.ready': { request: undefined; response: { ok: true } }
   'word.parse': { request: WordParseRequestPayload; response: WordParseResult }
+  'word.applyParagraphEdits': {
+    request: WordApplyParagraphEditsPayload
+    response: WordApplyParagraphEditsResult
+  }
 }
 
 export type FileRequestType = keyof FileRequestMap

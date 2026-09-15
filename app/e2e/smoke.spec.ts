@@ -105,3 +105,90 @@ test('chatSend 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async
     )
     .toBe('FILE_NOT_FOUND')
 })
+
+// T-S2-05 冒烟：信任交互三通道（架构 §5 信任交互数据流的 preload → 主进程链路）。
+// listPending 无 pending 时安全默认空数组；accept/reject 对未知 id 返回
+// 结构化 CHANGESET_NOT_FOUND（TrustFlowError 经 toTrustError 降级为
+// { ok:false, error }，§3.1 IPC 错误规范化）而非 throw 到渲染层。
+// 信任栈随 initDataLayer 异步装配：就绪前 handler 抛 TRUST_NOT_READY，
+// evaluate 捕获后由 expect.poll 重试，直到返回结构化错误码。
+test('changeset:listPending 通道可用：返回数组', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as { api?: { listPendingChangesets?: () => Promise<unknown[]> } }
+          ).api
+          if (!api?.listPendingChangesets) return 'NO_BRIDGE'
+          try {
+            const views = await api.listPendingChangesets()
+            return Array.isArray(views) ? 'ARRAY' : 'NOT_ARRAY'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('ARRAY')
+})
+
+test('changeset:accept 通道可用：未知 id 返回结构化 CHANGESET_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { acceptChangeset?: (id: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.acceptChangeset) return 'NO_BRIDGE'
+          try {
+            const result = (await api.acceptChangeset('no-such-changeset')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('CHANGESET_NOT_FOUND')
+})
+
+test('changeset:reject 通道可用：未知 id 返回结构化 CHANGESET_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { rejectChangeset?: (id: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.rejectChangeset) return 'NO_BRIDGE'
+          try {
+            const result = (await api.rejectChangeset('no-such-changeset')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('CHANGESET_NOT_FOUND')
+})

@@ -1,5 +1,5 @@
 import type { FileRecord } from './db-protocol'
-import type { ChangeSet, UsageRecord } from './agent'
+import type { AtomicChange, ChangeSet, ChangeSetStatus, UsageRecord } from './agent'
 
 // 渲染进程可调用的白名单 API（preload 通过 contextBridge 暴露）。
 // 渲染层禁止直接碰 Node/文件系统/密钥（架构 §2 安全红线），
@@ -66,4 +66,40 @@ export interface IpcApi {
   // 对指定文件发起一轮智能体对话（T-S2-04）。
   // 流式 token 推送属 T-S2-06 流式管道，此处先落请求/响应形态。
   chatSend: (fileId: string, prompt: string) => Promise<ChatTurnResult>
+  // —— T-S2-05 信任交互（架构 §5）——
+  // 列出当前 pending 的 ChangeSet（changes 已 resolve，含 >512KB 外置文件回读）。
+  listPendingChangesets: () => Promise<ChangeSetView[]>
+  // 接受（全部或部分）。acceptedChangeIds 省略 = 全部接受；
+  // 传 AtomicChange.id 列表 = 部分接受（仅勾选项写入文件）。
+  acceptChangeset: (id: string, acceptedChangeIds?: string[]) => Promise<TrustApplyResult>
+  // 拒绝：丢弃 ChangeSet 并清理外置文件，文件内容不变。
+  rejectChangeset: (id: string) => Promise<TrustRejectResult>
+}
+
+// ChangeSet 的渲染视图（T-S2-05）：渲染层只拿展示所需的窄字段，不暴露
+// changesPath 等存储细节。fileName 由主进程 join files 表得出。
+export interface ChangeSetView {
+  id: string
+  fileId: string
+  fileName: string
+  // 触发本次修改的对话指令（卡片头部展示；M1 冻结无 toolName 列，以此近似）。
+  sourceCommand: string | null
+  status: 'pending'
+  changes: AtomicChange[]
+}
+
+// accept 的结构化结果：成功带终态与已应用计数；失败走 error（§3.1 规范化）。
+export interface TrustApplyResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  status?: ChangeSetStatus
+  appliedCount?: number
+  // 写入后新正文哈希（成功时必填，可用于断言基线刷新）。
+  contentHash?: string
+}
+
+export interface TrustRejectResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  status?: 'discarded'
 }

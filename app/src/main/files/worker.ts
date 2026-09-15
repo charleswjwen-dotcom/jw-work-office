@@ -1,5 +1,6 @@
 import type { FileRequest, FileResponse } from '../../shared/file-protocol'
 import { parseWordFile } from './word-parser'
+import { applyParagraphEdits } from './word-writer'
 
 // 文件引擎 Utility 进程入口（架构 §2「文件引擎必须运行在 Utility 进程」，7A.1）。
 //
@@ -19,6 +20,15 @@ async function handle(req: FileRequest): Promise<unknown> {
     case 'word.parse': {
       const p = req.payload as { sourcePath: string }
       return parseWordFile(p.sourcePath)
+    }
+    case 'word.applyParagraphEdits': {
+      // T-S2-05 信任交互 accept 分支：确认后确定性改写（写入器内部完成
+      // expectedBefore 对齐校验与 .tmp→fsync→rename 原子落盘，架构 §5）。
+      const p = req.payload as {
+        sourcePath: string
+        edits: import('../../shared/file-protocol').WordParagraphEdit[]
+      }
+      return applyParagraphEdits(p.sourcePath, p.edits)
     }
     default: {
       const exhaustive: never = req.type as never

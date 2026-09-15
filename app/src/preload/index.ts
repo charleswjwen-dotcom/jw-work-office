@@ -9,7 +9,11 @@ const api: IpcApi = {
   importWord: () => ipcRenderer.invoke('file:importWord'),
   listFiles: (workspaceId) => ipcRenderer.invoke('file:list', workspaceId),
   searchFiles: (query) => ipcRenderer.invoke('file:search', query),
-  chatSend: (fileId, prompt) => ipcRenderer.invoke('chat:send', fileId, prompt)
+  chatSend: (fileId, prompt) => ipcRenderer.invoke('chat:send', fileId, prompt),
+  listPendingChangesets: () => ipcRenderer.invoke('changeset:listPending'),
+  acceptChangeset: (id, acceptedChangeIds) =>
+    ipcRenderer.invoke('changeset:accept', id, acceptedChangeIds),
+  rejectChangeset: (id) => ipcRenderer.invoke('changeset:reject', id)
 }
 
 if (process.contextIsolated) {

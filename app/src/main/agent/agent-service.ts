@@ -8,6 +8,7 @@ import { buildContext } from '../context/context-builder'
 import type { DocumentParagraph } from '../context/context-builder'
 import type { ChatContextSummary, ChatTurnResult } from '@shared/ipc'
 import type { UsageRecord } from '@shared/agent'
+import type { TrustService } from '../trust/trust-service'
 import { createLogger } from '../logger'
 
 const log = createLogger('agent-service')
@@ -26,6 +27,10 @@ const log = createLogger('agent-service')
 //   前后差值，避免把其他文件/轮次的用量记到本轮头上。
 // - contextHint（§3.3 覆盖点）在此首次接线：replaceText 声明的
 //   "按段落精确操作"提示传给 buildContext，决定哪些段落进上下文。
+// - T-S2-05 起信任流闭环：runTurn 成功后经可选的 TrustService 把 pending
+//   ChangeSet 落库（§5 第 2 步）。落库失败降级为日志告警，不改变
+//   ChatTurnResult 的返回语义（对话结果与持久化解耦；渲染层卡片以
+//   changeset:listPending 的落库事实为准）。
 
 export interface AgentTurnParams {
   fileId: string
@@ -37,6 +42,9 @@ export interface AgentServiceDeps {
   gateway: LlmGateway
   registry: ToolRegistry
   session: DocumentSession
+  // T-S2-05：pending ChangeSet 持久化端口。可选项——无信任流的环境
+  // （如部分纯编排测试）不注入，行为与 T-S2-04 完全一致。
+  trust?: TrustService
 }
 
 function emptyContextSummary(): ChatContextSummary {
@@ -93,6 +101,25 @@ export class AgentService {
     }
 
     const usageAfter = this.deps.gateway.getUsage()
+
+    // T-S2-05 信任流第 2 步（§5）：pending ChangeSet 落库。错误降级 ChangeSet
+    // （status='discarded'）只是本轮回执，不落库。落库失败仅告警——对话结果
+    // 照常返回，用户下次发起对话时 supersede 逻辑会清理失序状态。
+    if (this.deps.trust) {
+      for (const cs of run.changeSets) {
+        if (cs.status !== 'pending') continue
+        try {
+          await this.deps.trust.persistPending(cs, params.fileId, params.prompt)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          log.warn(
+            { event: 'trust-persist-failed', changeSetId: cs.id, fileId: params.fileId },
+            `changeset persist failed: ${message}`
+          )
+        }
+      }
+    }
+
     return {
       ok: true,
       changeSets: run.changeSets,

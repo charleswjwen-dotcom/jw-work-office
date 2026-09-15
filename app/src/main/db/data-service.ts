@@ -58,6 +58,25 @@ export class DataService {
     return record.changes ?? null
   }
 
+  // T-S2-05 信任交互：resolve 后读取（外置 changes 时从 .changeset 文件解析回填）。
+  // 外置文件丢失（被外部删除）时 changes 落回 null，由上层判定为不可应用。
+  getResolvedChangeSet(id: string): ChangeSetRecord | null {
+    const record = this.changeSets.get(id)
+    if (!record) return null
+    if (record.changesPath) {
+      return { ...record, changes: this.readChangeSetChanges(record) }
+    }
+    return record
+  }
+
+  listPendingResolved(): ChangeSetRecord[] {
+    return this.changeSets
+      .listPending()
+      .map((record) =>
+        record.changesPath ? { ...record, changes: this.readChangeSetChanges(record) } : record
+      )
+  }
+
   discardChangeSet(id: string): ChangeSetRecord | null {
     const cs = this.changeSets.get(id)
     if (!cs) return null

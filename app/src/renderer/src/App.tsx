@@ -1,14 +1,43 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/components/ui/button'
 import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
+import { ChangeSetCard } from '@renderer/components/chat/ChangeSetCard'
 import { useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
+import type { FileRecord } from '@shared/db-protocol'
 
 type IpcState = 'checking' | 'ok' | 'error'
+
+// 会话气泡（T-S2-04 请求/响应形态；流式输出属 T-S2-06）。
+// role=system 专用于错误与拦截提示，与 assistant 的正常回复区分。
+interface ChatBubble {
+  id: number
+  role: 'user' | 'assistant' | 'system'
+  text: string
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTime(ms: number): string {
+  const d = new Date(ms)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`
+}
 
 function App(): React.JSX.Element {
   const [ipcState, setIpcState] = useState<IpcState>('checking')
   const [dark, setDark] = useState(false)
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
+  const [bubbles, setBubbles] = useState<ChatBubble[]>([])
+  const [prompt, setPrompt] = useState('')
+  const bubbleSeq = useRef(0)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const layout = useUiStore((s) => s.layout)
   const viewMode = useUiStore((s) => s.viewMode)
@@ -22,6 +51,114 @@ function App(): React.JSX.Element {
   const pushUndo = useUiStore((s) => s.pushUndo)
   const clearUndo = useUiStore((s) => s.clearUndo)
   const pruneUndo = useUiStore((s) => s.pruneUndo)
+
+  const qc = useQueryClient()
+
+  const filesQuery = useQuery({ queryKey: ['files'], queryFn: () => window.api.listFiles() })
+  const pendingQuery = useQuery({
+    queryKey: ['changesets', 'pending'],
+    queryFn: () => window.api.listPendingChangesets()
+  })
+
+  const files = filesQuery.data ?? []
+  // useMemo 固定空数组引用：pending 未就绪时避免 `?? []` 每渲染新建数组，
+  // 触发下方自动滚动 useEffect 的依赖抖动（react-hooks/exhaustive-deps）。
+  const pendingChangesets = useMemo(() => pendingQuery.data ?? [], [pendingQuery.data])
+  // 未显式选择时回退到首个文件，避免「有文件却无会话对象」的死角。
+  const selectedFile: FileRecord | null =
+    files.find((f) => f.id === selectedFileId) ?? files[0] ?? null
+
+  const pushBubble = (role: ChatBubble['role'], text: string): void => {
+    bubbleSeq.current += 1
+    setBubbles((prev) => [...prev, { id: bubbleSeq.current, role, text }])
+  }
+
+  // 对话一轮（T-S2-04）：ChangeSet 由主进程 AgentService 落库，
+  // 渲染层只负责刷新 pending 卡片，不在本地拼装信任数据。
+  const sendMutation = useMutation({
+    mutationFn: (vars: { fileId: string; text: string }) =>
+      window.api.chatSend(vars.fileId, vars.text),
+    onSuccess: (res) => {
+      if (res.ok) {
+        pushBubble('assistant', res.finalMessage || '本轮完成（无文本回复）。')
+      } else {
+        pushBubble(
+          'system',
+          `请求失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      }
+      for (const tip of res.interceptions) pushBubble('system', `系统拦截：${tip}`)
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 信任交互（架构 §5）：接受成功后基线已刷新，文件列表必须重取。
+  const acceptMutation = useMutation({
+    mutationFn: (vars: { id: string; acceptedChangeIds?: string[] }) =>
+      window.api.acceptChangeset(vars.id, vars.acceptedChangeIds),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `应用失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble('assistant', `已写入文件（${res.appliedCount ?? 0} 处变更，状态 ${res.status}）。`)
+      }
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+      void qc.invalidateQueries({ queryKey: ['files'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  const rejectMutation = useMutation({
+    mutationFn: (id: string) => window.api.rejectChangeset(id),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `放弃失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble('assistant', '已放弃该变更集，文件保持不变。')
+      }
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  const importMutation = useMutation({
+    mutationFn: () => window.api.importWord(),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['files'] })
+      const first = res.imported[0]
+      if (first) setSelectedFileId(first.file.id)
+      if (res.failures.length > 0) {
+        pushBubble(
+          'system',
+          `部分文件导入失败：${res.failures.map((f) => `${f.path}（${f.reason}）`).join('；')}`
+        )
+      }
+    },
+    onError: (err: Error) => pushBubble('system', `导入失败：${err.message}`)
+  })
+
+  const sendPrompt = (): void => {
+    const text = prompt.trim()
+    if (!selectedFile || !text || sendMutation.isPending) return
+    pushBubble('user', text)
+    setPrompt('')
+    sendMutation.mutate({ fileId: selectedFile.id, text })
+  }
+
+  // Enter 发送、Shift+Enter 换行；isComposing 让路中文输入法选词阶段。
+  const onComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      sendPrompt()
+    }
+  }
 
   useEffect(() => {
     window.api
@@ -46,6 +183,11 @@ function App(): React.JSX.Element {
     const t = setTimeout(() => pruneUndo(), 1_000)
     return () => clearTimeout(t)
   }, [undo, pruneUndo])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [bubbles, pendingChangesets])
 
   const ipcBadge = {
     checking: { text: 'IPC 检测中…', cls: 'bg-amber-soft text-amber' },
@@ -103,12 +245,46 @@ function App(): React.JSX.Element {
             <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
               文件
             </h2>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mb-3 w-full"
+              disabled={importMutation.isPending}
+              onClick={() => importMutation.mutate()}
+            >
+              {importMutation.isPending ? '导入中…' : '导入 Word…'}
+            </Button>
             <input
               disabled
-              placeholder="搜索文件 / 关键词（FTS5，待 T-S2-02）"
+              placeholder="搜索文件 / 关键词（FTS5，待后续任务）"
               className="mb-3 w-full rounded-sm border border-border bg-surface px-2.5 py-1.5 text-xs outline-none placeholder:text-text-faint"
             />
-            <p className="text-xs text-text-muted">暂无文件，拖入 Word / Excel / PPT 开始。</p>
+            {files.length === 0 ? (
+              <p className="text-xs text-text-muted">暂无文件，点击「导入 Word…」开始。</p>
+            ) : (
+              <ul className="space-y-1">
+                {files.map((f) => {
+                  const active = f.id === selectedFile?.id
+                  return (
+                    <li key={f.id}>
+                      <button
+                        onClick={() => setSelectedFileId(f.id)}
+                        className={`w-full rounded-sm border px-2.5 py-1.5 text-left text-xs ${
+                          active
+                            ? 'border-accent bg-accent-soft text-accent-text'
+                            : 'border-border-sub bg-surface text-text-body hover:bg-surface-hover'
+                        }`}
+                      >
+                        <span className="block truncate font-medium">{f.name}</span>
+                        <span className="mt-0.5 block text-[11px] text-text-muted">
+                          {formatSize(f.size)} · {formatTime(f.modifiedAt)}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
             <div className="mt-4 space-y-1.5">
               <p className="text-[11px] font-medium uppercase tracking-wide text-text-faint">
                 能力（S3 即将上线）
@@ -141,13 +317,45 @@ function App(): React.JSX.Element {
         )}
 
         <section aria-label="会话" className="flex min-h-0 flex-col">
-          <h2 className="shrink-0 border-b border-border px-4 py-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            会话
+          <h2 className="shrink-0 truncate border-b border-border px-4 py-2 text-xs font-medium uppercase tracking-wide text-text-muted">
+            会话{selectedFile ? ` · ${selectedFile.name}` : ''}
           </h2>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
-            <p className="text-sm text-text-muted">
-              与办公智能体对话的区域（消息气泡 / 流式输出 / ChangeSet 卡片待 T-S2-04/05）。
-            </p>
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
+            {bubbles.length === 0 && pendingChangesets.length === 0 ? (
+              <p className="text-sm text-text-muted">
+                {selectedFile
+                  ? `已选中「${selectedFile.name}」，描述你想对文档做的操作。`
+                  : '先在左侧导入并选中一个 Word 文件。'}
+              </p>
+            ) : null}
+            <div className="space-y-2.5">
+              {bubbles.map((b) => (
+                <div key={b.id} className={`flex ${b.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3.5 py-2 text-sm ${
+                      b.role === 'user'
+                        ? 'bg-accent text-white'
+                        : b.role === 'assistant'
+                          ? 'bg-surface-raised text-text-body'
+                          : 'border border-amber/40 bg-amber-soft text-amber'
+                    }`}
+                  >
+                    {b.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {pendingChangesets.map((cs) => (
+              <ChangeSetCard
+                key={cs.id}
+                view={cs}
+                busy={acceptMutation.isPending || rejectMutation.isPending}
+                onAccept={(id, acceptedChangeIds) =>
+                  acceptMutation.mutate({ id, acceptedChangeIds })
+                }
+                onReject={(id) => rejectMutation.mutate(id)}
+              />
+            ))}
           </div>
           <div className="shrink-0 border-t border-border">
             <ResizeHandle
@@ -159,13 +367,30 @@ function App(): React.JSX.Element {
               invert
               onChange={setComposerH}
             />
-            <div className="p-3 pt-2">
+            <div className="flex items-end gap-2 p-3 pt-2">
               <textarea
-                disabled
-                placeholder="描述你想对文档做的操作…（骨架阶段暂不可用）"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={onComposerKeyDown}
+                disabled={!selectedFile || sendMutation.isPending}
+                placeholder={
+                  sendMutation.isPending
+                    ? '本轮处理中…'
+                    : selectedFile
+                      ? `对「${selectedFile.name}」下达指令…（Enter 发送，Shift+Enter 换行）`
+                      : '先在左侧选择文件'
+                }
                 style={{ height: layout.composerH }}
-                className="w-full resize-none rounded-sm border border-border bg-surface px-3 py-2 text-sm outline-none placeholder:text-text-faint"
+                className="min-w-0 flex-1 resize-none rounded-sm border border-border bg-surface px-3 py-2 text-sm outline-none placeholder:text-text-faint disabled:opacity-60"
               />
+              <Button
+                className="h-9 shrink-0"
+                size="sm"
+                disabled={!selectedFile || !prompt.trim() || sendMutation.isPending}
+                onClick={sendPrompt}
+              >
+                {sendMutation.isPending ? '处理中…' : '发送'}
+              </Button>
             </div>
           </div>
         </section>
@@ -192,7 +417,7 @@ function App(): React.JSX.Element {
           </h2>
           <div className="min-h-0 flex-1 overflow-auto p-4">
             <p className="text-sm text-text-muted">
-              预览与 diff 工件区（Word mammoth 预览 + diff 高亮待 T-S2-03/05）。
+              预览与 diff 工件区（Word mammoth 预览 + diff 高亮待后续任务）。
             </p>
           </div>
         </section>

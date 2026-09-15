@@ -111,6 +111,22 @@ export type DbRequestMap = {
     request: { id: string; status: ChangeSetRecord['status'] }
     response: ChangeSetRecord | null
   }
+  // T-S2-05 信任交互：resolve 后读取——changes 字段无论内联还是外置（>512KB），
+  // 都返回解析后的完整值，供主进程做 accept 编辑映射、渲染层做 diff 展示。
+  'changeSet.getResolved': {
+    request: { id: string }
+    response: ChangeSetRecord | null
+  }
+  'changeSet.listPendingResolved': {
+    request: undefined
+    response: ChangeSetRecord[]
+  }
+  // T-S2-05 拒绝分支：必须走 DataService.discardChangeSet（先删外置 changes 文件、
+  // 再删 DB 行，架构 §5 清理顺序），而非裸 updateStatus——后者会留下孤儿外置文件。
+  'changeSet.discard': {
+    request: { id: string }
+    response: ChangeSetRecord | null
+  }
   'conversation.create': {
     request: ConversationRecord
     response: ConversationRecord
