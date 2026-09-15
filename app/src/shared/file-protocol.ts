@@ -78,13 +78,36 @@ export interface WordApplyParagraphEditsResult {
   modifiedAt: string
 }
 
+// —— T-S2-06 快照与线性回溯（架构 §5 / PRD 3.3）——
+//
+// word.parseParagraphs：按 splitParagraphs 唯一规则源切段（非空段从 0 计数），
+// 供版本 diff 预览与回溯反向变更计算——段落口径必须与解析/写入侧严格一致，
+// 否则"版本历史里的段落号"与"实际段落"错位。
+export interface WordParseParagraphsResult {
+  paragraphs: string[]
+}
+
+// file.copy：字节级复制（.tmp→fsync→rename 原子落盘）。两个消费方：
+// ① 快照写入：工作文件 → snapshots/{versionId}.snapshot.docx（后像快照）；
+// ② 回溯替换：快照 → 工作文件（架构 §5 回退的原子替换）。
+// 返回 byteSize 供版本元数据与 files.size 记录。
+export interface FileCopyPayload {
+  sourcePath: string
+  destPath: string
+}
+
 export type FileRequestMap = {
   'file.ready': { request: undefined; response: { ok: true } }
   'word.parse': { request: WordParseRequestPayload; response: WordParseResult }
+  'word.parseParagraphs': {
+    request: WordParseRequestPayload
+    response: WordParseParagraphsResult
+  }
   'word.applyParagraphEdits': {
     request: WordApplyParagraphEditsPayload
     response: WordApplyParagraphEditsResult
   }
+  'file.copy': { request: FileCopyPayload; response: { byteSize: number } }
 }
 
 export type FileRequestType = keyof FileRequestMap

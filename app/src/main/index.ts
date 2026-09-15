@@ -14,6 +14,7 @@ import { createReplaceTextTool } from './tools/replace-text-tool'
 import { DocumentSession } from './agent/document-session'
 import { AgentService } from './agent/agent-service'
 import { TrustService } from './trust/trust-service'
+import { VersionService } from './trust/version-service'
 
 const log = createLogger('main')
 
@@ -26,6 +27,7 @@ let fileClient: FileClient | null = null
 let filesDir = ''
 let agentService: AgentService | null = null
 let trustService: TrustService | null = null
+let versionService: VersionService | null = null
 
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -37,7 +39,9 @@ async function initDataLayer(): Promise<void> {
   const dbFile = join(ensureDir(join(userData, 'db')), 'my-work-office.db')
   const dirs = {
     tmpDir: ensureDir(join(userData, 'tmp')),
-    changesetDir: ensureDir(join(userData, 'changesets'))
+    changesetDir: ensureDir(join(userData, 'changesets')),
+    // T-S2-06 版本快照目录：后像快照 + 回溯快照都落此处，recovery 据此清孤儿。
+    snapshotsDir: ensureDir(join(userData, 'snapshots'))
   }
   // 导入文件副本目录：源文件复制进此处，改写只针对副本，不动用户原始文件（§5）。
   filesDir = ensureDir(join(userData, 'files'))
@@ -63,7 +67,8 @@ async function initDataLayer(): Promise<void> {
       event: 'db-ready',
       pending: recovery.pending.length,
       cleanedTmp: recovery.cleanedTmp,
-      cleanedExternal: recovery.cleanedExternal
+      cleanedExternal: recovery.cleanedExternal,
+      cleanedSnapshots: recovery.cleanedSnapshots
     },
     'data layer ready, crash recovery done'
   )
@@ -81,7 +86,14 @@ async function initDataLayer(): Promise<void> {
   registry.register(createReplaceTextTool(session.resolveParagraph))
   // T-S2-05：TrustService 结构化端口直接注入真实 client（request 签名一致），
   // AgentService 借它把每轮 pending ChangeSet 落库（架构 §5 信任流第 2 步）。
-  trustService = new TrustService({ dbPort: dbClient, filePort: fileClient })
+  // T-S2-06：VersionService 先装配，再作为 version 端口注入 TrustService——
+  // accept 写入成功后自动生成后像快照（§5 7A.3）。
+  versionService = new VersionService({
+    dbPort: dbClient,
+    filePort: fileClient,
+    snapshotsDir: dirs.snapshotsDir
+  })
+  trustService = new TrustService({ dbPort: dbClient, filePort: fileClient, version: versionService })
   agentService = new AgentService({ gateway, registry, session, trust: trustService })
   log.info(
     { event: 'agent-ready', providerMode: resolved.mode, note: resolved.note },
@@ -225,6 +237,35 @@ app.whenReady().then(() => {
     }
     try {
       return await trustService.reject(id)
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  // === T-S2-06 版本历史与线性回溯（架构 §5 / PRD 3.3）===
+  // 版本流程错误（VersionFlowError(code)）与信任流同构，复用 toTrustError 包装。
+  ipcMain.handle('version:list', async (_e, fileId: string) => {
+    if (!versionService) return []
+    return versionService.listVersionViews(fileId)
+  })
+
+  ipcMain.handle('version:diff', async (_e, versionId: string) => {
+    if (!versionService) {
+      throw new Error('VERSION_NOT_READY')
+    }
+    try {
+      return { ok: true, ...(await versionService.getVersionDiff(versionId)) }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
+
+  ipcMain.handle('version:restore', async (_e, versionId: string) => {
+    if (!versionService) {
+      throw new Error('VERSION_NOT_READY')
+    }
+    try {
+      return { ok: true, ...(await versionService.restore(versionId)) }
     } catch (err) {
       return { ok: false, error: toTrustError(err) }
     }

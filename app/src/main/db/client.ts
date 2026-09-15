@@ -31,7 +31,11 @@ export class DbClient {
         ...process.env,
         MWO_DB_FILE: options.dbFile,
         MWO_TMP_DIR: options.dirs.tmpDir,
-        MWO_CHANGESET_DIR: options.dirs.changesetDir
+        MWO_CHANGESET_DIR: options.dirs.changesetDir,
+        // T-S2-06：快照目录转发（可选——提供时 db-worker 的 recovery 才清孤儿快照）。
+        ...(options.dirs.snapshotsDir
+          ? { MWO_SNAPSHOT_DIR: options.dirs.snapshotsDir }
+          : {})
       }
     })
 

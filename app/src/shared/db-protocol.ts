@@ -98,6 +98,8 @@ export type DbRequestMap = {
     request: { fileId: string }
     response: VersionRecord[]
   }
+  // T-S2-06 线性回溯：按 id 取单个版本（快照路径、seq、parent 链）。
+  'version.get': { request: { id: string }; response: VersionRecord | null }
   'changeSet.create': { request: ChangeSetRecord; response: ChangeSetRecord }
   'changeSet.get': {
     request: { id: string }
@@ -150,7 +152,14 @@ export type DbRequestMap = {
   }
   'recovery.run': {
     request: undefined
-    response: { pending: ChangeSetRecord[]; cleanedTmp: number; cleanedExternal: number }
+    response: {
+      pending: ChangeSetRecord[]
+      cleanedTmp: number
+      cleanedExternal: number
+      // T-S2-06：孤儿版本快照（snapshots 目录中无 versions 行引用的
+      // .snapshot.docx 及其残留 .tmp）清理数。
+      cleanedSnapshots: number
+    }
   }
 }
 

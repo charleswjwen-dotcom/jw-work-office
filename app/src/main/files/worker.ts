@@ -1,5 +1,6 @@
 import type { FileRequest, FileResponse } from '../../shared/file-protocol'
-import { parseWordFile } from './word-parser'
+import { copyFileAtomicSync } from '../db/atomic-write'
+import { parseWordFile, splitParagraphs } from './word-parser'
 import { applyParagraphEdits } from './word-writer'
 
 // 文件引擎 Utility 进程入口（架构 §2「文件引擎必须运行在 Utility 进程」，7A.1）。
@@ -29,6 +30,18 @@ async function handle(req: FileRequest): Promise<unknown> {
         edits: import('../../shared/file-protocol').WordParagraphEdit[]
       }
       return applyParagraphEdits(p.sourcePath, p.edits)
+    }
+    case 'word.parseParagraphs': {
+      // T-S2-06 版本 diff 预览/回溯：按 splitParagraphs 唯一规则源切段
+      // （非空段从 0 计数），段落口径与解析/写入侧严格一致（file-protocol 注释）。
+      const p = req.payload as { sourcePath: string }
+      const parsed = await parseWordFile(p.sourcePath)
+      return { paragraphs: splitParagraphs(parsed.text) }
+    }
+    case 'file.copy': {
+      // T-S2-06：字节级原子复制（.tmp→fsync→rename）。快照落盘与回溯替换共用。
+      const p = req.payload as { sourcePath: string; destPath: string }
+      return { byteSize: copyFileAtomicSync(p.sourcePath, p.destPath) }
     }
     default: {
       const exhaustive: never = req.type as never

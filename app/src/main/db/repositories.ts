@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNotNull } from 'drizzle-orm'
 import type {
   ChangeSetRecord,
   ConversationRecord,
@@ -224,6 +224,24 @@ export class VersionRepository {
       .orderBy(desc(versions.seq))
       .all()
       .map(toVersionRecord)
+  }
+
+  // T-S2-06 线性回溯：按 id 取单个版本（快照路径、seq、parent 链）。
+  get(id: string): VersionRecord | null {
+    const row = this.db.select().from(versions).where(eq(versions.id, id)).get()
+    return row ? toVersionRecord(row) : null
+  }
+
+  // T-S2-06 崩溃恢复：全部被 versions 行引用的快照绝对路径——
+  // 孤儿快照判定基准（snapshots 目录中不在此集合内的即可清理）。
+  listSnapshotPaths(): string[] {
+    return this.db
+      .select({ snapshotPath: versions.snapshotPath })
+      .from(versions)
+      .where(isNotNull(versions.snapshotPath))
+      .all()
+      .map((row) => row.snapshotPath)
+      .filter((p): p is string => p !== null)
   }
 }
 

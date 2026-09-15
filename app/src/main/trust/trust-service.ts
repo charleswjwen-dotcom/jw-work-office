@@ -17,6 +17,9 @@ import { createLogger } from '../logger'
 //   ChangeSet 保持 pending、文件保持原样——不存在"半应用"状态。
 // - reject：用户拒绝 → changeSet.discard（先删外置 changes 文件、再删 DB 行，
 //   §5 清理顺序）→ 文件不变。
+// - T-S2-06 后像快照钩子：accept 写入成功后调 version.onApplied 生成版本快照
+//   （§5 7A.3：快照写成功才移 currentVersionId 指针），失败则整轮 accept 抛错、
+//   状态保持 pending——重放会因 expectedBefore 不一致被文件引擎拦截。
 //
 // 可测试性设计（与 AgentService 同一约定）：
 // - 依赖是结构化端口接口（request 方法签名与 DbClient/FileClient 完全一致），
@@ -42,9 +45,27 @@ export interface TrustFilePort {
   ): Promise<FileRequestMap[T]['response']>
 }
 
+// T-S2-06 版本事件端口：accept 写入成功后由 VersionService 实现（生成后像快照）。
+// 定义在消费方（trust-service）、实现在 version-service——单向 import，无环。
+export interface TrustVersionAppliedInput {
+  fileId: string
+  filePath: string
+  changeSetId: string
+  sourceCommand: string | null
+  contentHash: string
+  parentVersionId: string | null
+  appliedCount: number
+  totalCount: number
+}
+
+export interface TrustVersionPort {
+  onApplied(input: TrustVersionAppliedInput): Promise<void>
+}
+
 export interface TrustServiceDeps {
   dbPort: TrustDbPort
   filePort: TrustFilePort
+  version?: TrustVersionPort
 }
 
 export class TrustFlowError extends Error {
@@ -196,6 +217,22 @@ export class TrustService {
         modifiedAt: Date.now()
       }
     })
+    // T-S2-06 后像快照（§5 7A.3）：快照写成功才更新 current_version_id，
+    // 因此钩子在状态终态化之前执行。失败让整轮 accept 抛错、状态保持
+    // pending——文件已改写但无版本记录（灰区），重放 accept 会因
+    // expectedBefore 对齐不一致被文件引擎拦截，不存在静默丢快照的二次写。
+    if (this.deps.version) {
+      await this.deps.version.onApplied({
+        fileId: file.id,
+        filePath: file.path,
+        changeSetId: id,
+        sourceCommand: record.sourceCommand,
+        contentHash: applied.contentHash,
+        parentVersionId: file.currentVersionId,
+        appliedCount: selected.length,
+        totalCount: changes.length
+      })
+    }
     const status = selected.length === changes.length ? 'applied' : 'partial'
     await this.deps.dbPort.request('changeSet.updateStatus', { id, status })
 

@@ -12,7 +12,8 @@ const service = new DataService({
   handle: openDatabase(process.env.MWO_DB_FILE ?? ':memory:'),
   dirs: {
     tmpDir: process.env.MWO_TMP_DIR ?? '.',
-    changesetDir: process.env.MWO_CHANGESET_DIR ?? '.'
+    changesetDir: process.env.MWO_CHANGESET_DIR ?? '.',
+    ...(process.env.MWO_SNAPSHOT_DIR ? { snapshotsDir: process.env.MWO_SNAPSHOT_DIR } : {})
   }
 })
 
@@ -42,6 +43,8 @@ function handle(req: DbRequest): unknown {
       return service.versions.create(req.payload as never)
     case 'version.listByFile':
       return service.versions.listByFile((req.payload as { fileId: string }).fileId)
+    case 'version.get':
+      return service.versions.get((req.payload as { id: string }).id)
     case 'changeSet.create':
       return service.createChangeSet(req.payload as ChangeSetRecord)
     case 'changeSet.get':

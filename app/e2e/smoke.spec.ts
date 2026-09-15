@@ -192,3 +192,63 @@ test('changeset:reject 通道可用：未知 id 返回结构化 CHANGESET_NOT_FO
     )
     .toBe('CHANGESET_NOT_FOUND')
 })
+
+// T-S2-06 冒烟：版本历史与线性回溯（架构 §5 快照数据流 / PRD 3.3）。
+// listVersions 与 listPending 同为「读视图」通道：未知文件安全默认空数组；
+// restoreVersion 对未知 id 返回结构化 VERSION_NOT_FOUND（VersionFlowError
+// 复用 toTrustError 降级为 { ok:false, error }，§3.1 IPC 错误规范化）而非
+// throw 到渲染层。版本栈随 initDataLayer 异步装配：就绪前 handler 抛
+// VERSION_NOT_READY，evaluate 捕获后由 expect.poll 重试。
+test('version:list 通道可用：未知文件返回空数组', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { listVersions?: (fileId: string) => Promise<unknown[]> }
+            }
+          ).api
+          if (!api?.listVersions) return 'NO_BRIDGE'
+          try {
+            const views = await api.listVersions('no-such-file')
+            return Array.isArray(views) && views.length === 0 ? 'EMPTY_ARRAY' : 'NOT_EMPTY'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('EMPTY_ARRAY')
+})
+
+test('version:restore 通道可用：未知 id 返回结构化 VERSION_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { restoreVersion?: (versionId: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.restoreVersion) return 'NO_BRIDGE'
+          try {
+            const result = (await api.restoreVersion('no-such-version')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('VERSION_NOT_FOUND')
+})

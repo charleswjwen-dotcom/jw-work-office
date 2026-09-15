@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/components/ui/button'
 import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
 import { ChangeSetCard } from '@renderer/components/chat/ChangeSetCard'
+import { VersionHistoryPanel } from '@renderer/components/chat/VersionHistoryPanel'
 import { useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
 import type { FileRecord } from '@shared/db-protocol'
@@ -108,6 +109,9 @@ function App(): React.JSX.Element {
       }
       void qc.invalidateQueries({ queryKey: ['changesets'] })
       void qc.invalidateQueries({ queryKey: ['files'] })
+      // 接受后 onApplied 已生成快照版本（T-S2-06）：版本历史与 diff 预览缓存同步失效。
+      void qc.invalidateQueries({ queryKey: ['versions'] })
+      void qc.invalidateQueries({ queryKey: ['version-diff'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -124,6 +128,30 @@ function App(): React.JSX.Element {
         pushBubble('assistant', '已放弃该变更集，文件保持不变。')
       }
       void qc.invalidateQueries({ queryKey: ['changesets'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 线性回溯（T-S2-06 / 架构 §5）：恢复成功后文件基线、版本链与 pending
+  // 变更集全部变化（同文件 pending 已被回溯清理），四类缓存都要重取。
+  const restoreMutation = useMutation({
+    mutationFn: (versionId: string) => window.api.restoreVersion(versionId),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `恢复失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble(
+          'assistant',
+          `已恢复到目标版本（${res.appliedCount ?? 0} 处变更；回溯本身已生成新版本与反向 ChangeSet）。`
+        )
+      }
+      void qc.invalidateQueries({ queryKey: ['versions'] })
+      void qc.invalidateQueries({ queryKey: ['version-diff'] })
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+      void qc.invalidateQueries({ queryKey: ['files'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -356,6 +384,15 @@ function App(): React.JSX.Element {
                 onReject={(id) => rejectMutation.mutate(id)}
               />
             ))}
+            {/* 版本历史（T-S2-06）：key 切换文件时重挂载，展开态随之重置。 */}
+            {selectedFile && (
+              <VersionHistoryPanel
+                key={selectedFile.id}
+                file={selectedFile}
+                busy={restoreMutation.isPending}
+                onRestore={(versionId) => restoreMutation.mutate(versionId)}
+              />
+            )}
           </div>
           <div className="shrink-0 border-t border-border">
             <ResizeHandle

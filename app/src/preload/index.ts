@@ -13,7 +13,11 @@ const api: IpcApi = {
   listPendingChangesets: () => ipcRenderer.invoke('changeset:listPending'),
   acceptChangeset: (id, acceptedChangeIds) =>
     ipcRenderer.invoke('changeset:accept', id, acceptedChangeIds),
-  rejectChangeset: (id) => ipcRenderer.invoke('changeset:reject', id)
+  rejectChangeset: (id) => ipcRenderer.invoke('changeset:reject', id),
+  // —— T-S2-06 版本历史与线性回溯 ——
+  listVersions: (fileId) => ipcRenderer.invoke('version:list', fileId),
+  getVersionDiff: (versionId) => ipcRenderer.invoke('version:diff', versionId),
+  restoreVersion: (versionId) => ipcRenderer.invoke('version:restore', versionId)
 }
 
 if (process.contextIsolated) {

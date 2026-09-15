@@ -85,7 +85,7 @@ export class DataService {
   }
 
   runRecovery() {
-    return runCrashRecovery(this.changeSets, this.dirs)
+    return runCrashRecovery(this.changeSets, this.dirs, this.versions)
   }
 
   close(): void {

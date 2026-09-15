@@ -1,4 +1,12 @@
-import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync
+} from 'node:fs'
 
 // 原子落盘（架构 §5 / 7A.3）：写 .tmp → fsync → rename。
 // rename 在同一文件系统内是原子操作，因此崩溃时文件要么是旧版要么是新版，
@@ -14,6 +22,15 @@ export function atomicWriteFileSync(filePath: string, data: string | Buffer): vo
     closeSync(fd)
   }
   renameSync(tmpPath, filePath)
+}
+
+// T-S2-06 字节级原子复制（读源 → 原子写目标）：版本快照落盘（工作文件 →
+// snapshots/）与回溯原子替换（快照 → 工作文件）共用同一原语，保证两条
+// 路径的落盘语义一致（架构 §5.1 原子性）。返回字节数供版本元数据记录。
+export function copyFileAtomicSync(sourcePath: string, destPath: string): number {
+  const data = readFileSync(sourcePath)
+  atomicWriteFileSync(destPath, data)
+  return data.byteLength
 }
 
 export function safeUnlink(filePath: string): boolean {

@@ -74,6 +74,13 @@ export interface IpcApi {
   acceptChangeset: (id: string, acceptedChangeIds?: string[]) => Promise<TrustApplyResult>
   // 拒绝：丢弃 ChangeSet 并清理外置文件，文件内容不变。
   rejectChangeset: (id: string) => Promise<TrustRejectResult>
+  // —— T-S2-06 版本历史与线性回溯（架构 §5 / PRD 3.3）——
+  // 列出指定文件的版本历史（seq 降序；当前版本带 isCurrent=true）。
+  listVersions: (fileId: string) => Promise<VersionView[]>
+  // 预览恢复到某版本的段落级 diff（当前内容 → 快照内容）。
+  getVersionDiff: (versionId: string) => Promise<VersionDiffResult>
+  // 恢复到指定版本：原子替换工作文件 + 新建反向 ChangeSet + 生成回溯后快照版本。
+  restoreVersion: (versionId: string) => Promise<RestoreResult>
 }
 
 // ChangeSet 的渲染视图（T-S2-05）：渲染层只拿展示所需的窄字段，不暴露
@@ -102,4 +109,40 @@ export interface TrustRejectResult {
   ok: boolean
   error?: { code: string; message: string }
   status?: 'discarded'
+}
+
+// —— T-S2-06 版本历史视图（PRD 3.3 / 架构 §5 线性回溯）——
+// 渲染层只拿展示所需窄字段，不暴露 snapshotPath 等存储细节。
+// isCurrent：该版本是否即 files.currentVersionId 指向的当前版本。
+export interface VersionView {
+  id: string
+  fileId: string
+  seq: number
+  createdAt: number
+  author: 'ai' | 'user' | 'external' | null
+  triggerCommand: string | null
+  changeSummary: string | null
+  isCurrent: boolean
+}
+
+// 版本 diff 预览的结构化结果（与 TrustApplyResult 同一扁平风格）：
+// changes = computeParagraphDiff(当前工作文件段落, 目标快照段落)——
+// before=当前内容、after=恢复后内容，渲染语义与 ChangeSetCard 一致
+// （删红=即将移除的现在，增绿=恢复回来的过去）。
+export interface VersionDiffResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  versionId?: string
+  seq?: number
+  changes?: AtomicChange[]
+}
+
+// 回溯结果：成功带新版本 id（回溯动作自身生成的后像快照）与反向 ChangeSet id。
+export interface RestoreResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  versionId?: string
+  changeSetId?: string
+  appliedCount?: number
+  contentHash?: string
 }
