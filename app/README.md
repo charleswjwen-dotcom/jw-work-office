@@ -40,7 +40,7 @@ npm run dev                 # 启动 Electron + Vite 热更新
 ```bash
 npm run typecheck   # 双 tsc（node + web）
 npm run lint        # eslint 严格模式
-npm test            # vitest（Node 环境，当前 27 用例）
+npm test            # vitest（Node 环境，24 文件 177 测试）
 npm run build       # electron-vite 生产构建
 npm run test:e2e    # playwright（Electron 冒烟 + 数据层就绪断言）
 ```
@@ -79,7 +79,7 @@ app/
 │   ├── db/            # SQLite + Drizzle 数据层（connection/worker/repositories/…）
 │   ├── files/         # 文件解析 Utility（word-parser 等）
 │   ├── import/        # Word 导入编排
-│   ├── llm/  tools/  agent/   # T-S0-05 PoC 遗留骨架，尚未接入 index.ts（见下）
+│   ├── llm/  tools/  agent/   # LLM 网关 / 工具注册表 / 对话代理（均已接入 index.ts）
 │   └── index.ts       # IPC 编排、Utility 客户端接线
 ├── src/preload/       # 预加载桥
 ├── src/renderer/      # React UI
@@ -93,10 +93,11 @@ app/
 
 ## 六、进度落点（截至最近一次更新）
 
-- 已完成：S0 PoC 主体、S1 设计冻结、**T-S2-01/02/03**（工程骨架 / SQLite+Drizzle 数据层 / Word 导入全链路）。
-- ⚠️ `src/main/llm`、`src/main/tools`、`src/main/agent` 为 **T-S0-05 PoC 遗留骨架，尚未接入 `index.ts`**（`index.ts` 无引用）。T-S2-04 将正式实现并接线。
-- **下一个任务：T-S2-04【P0】LLM 适配层 + 基础工具调用**——实现并接入 LLMGateway / ChatProvider / UsageMeter / ReplaceTextTool（产出 ChangeSet，不静默写文件）/ ToolRegistry / ContextBuilder。
-- 再往后：T-S2-05（ChangeSet 持久化 + diff 预览 + 信任交互 UI）。
+- 已完成：S0 PoC、S1 设计冻结、**S2 全部任务 + 六项门禁（2026-09-16 门禁⑤用户验收通过，S2 正式闭环）**。
+- 已落地（S2 口径）：Word 导入 / FTS5 检索 / 对话流式 + 工具调用 / ChangeSet 信任交互（确认/拒绝/部分接受）/ 版本快照回溯 + 限时真撤销 / 外部编辑三选项 / 多模型 Key 加密配置 / 三栏 UI（体验优化版，commit 950f0e5）。
+- **下一个任务：T-S3-01【P0】文件管理完整能力**——批量导入（拖拽/多选+进度）、元信息编辑、软删除、检索增强（高亮/排序/分页）、多工作空间。
+- 再往后：T-S3-02 Excel 处理 → T-S3-03 PPT 处理（S3 纵切顺序：Word 已通 → 扩 Excel → 再扩 PPT）。
+- 更细的导览与坑位速查见仓库根目录 [快速上手指南.md](../快速上手指南.md)。
 
 ---
 

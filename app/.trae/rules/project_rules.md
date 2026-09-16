@@ -8,9 +8,10 @@
 实现决策以下列文档为准，**代码不得偏离文档口径；若需偏离，先改文档再改代码**。
 
 - `需求文档.md`（PRD v2.1）— 产品需求、范围、验收口径
-- `架构设计文档.md`（HLD v1.2）— 进程模型、引擎选型、数据/变更模型
+- `架构设计文档.md`（HLD v1.3，M1 已冻结）— 进程模型、引擎选型、数据/变更模型
 - `后续工作计划.md`— 阶段划分与阶段门禁
 - `开发任务清单.md`（**开发主基准**）— 可执行任务分解（T-Sx-xx），每项带 `[x]` 证据
+- `快速上手指南.md`（仓库根）— 目录导览、环境/命令、任务驱动工作流、坑位速查
 
 **每次开工前**：读 `开发任务清单.md`，定位最近完成项与下一个 `[ ]` 任务。
 **每完成一项**：在清单对应子项打 `[x]` 并追加「证据：文件/用例」，禁止无证据勾选。
@@ -50,7 +51,7 @@ npm run test:e2e    # playwright（Electron 冒烟 + 数据层就绪断言）
 
 ## 5. 进度落点（截至最近一次更新）
 
-- 已完成：S0 PoC 主体、S1 设计冻结、**T-S2-01/02/03**（工程骨架 / SQLite+Drizzle 数据层 / Word 导入全链路）。
-- `src/main/llm`、`src/main/tools`、`src/main/agent` 为 **T-S0-05 PoC 遗留骨架，尚未接入 `index.ts`**。
-- **下一个任务：T-S2-04【P0】LLM 适配层 + 基础工具调用**（正式实现 LLMGateway / ChatProvider / ReplaceTextTool→ChangeSet / ToolRegistry / ContextBuilder 并接入主进程）。
-- 再往后：T-S2-05（ChangeSet 持久化 + diff 预览 + 信任交互 UI）。
+- 已完成：S0 PoC、S1 设计冻结、**S2 全部任务 + 六项门禁（2026-09-16 门禁⑤用户验收通过，S2 正式闭环，commit 950f0e5 体验优化已部署伪安装包）**。
+- `src/main/llm`、`src/main/tools`、`src/main/agent`、`src/main/trust`、`src/main/context` 均已接入 `index.ts`（S2 已完成接线，旧「PoC 遗留骨架」描述作废）。
+- **下一个任务：T-S3-01【P0】文件管理完整能力**（批量导入/元信息编辑/软删除/检索增强/多工作空间）。
+- 再往后：T-S3-02 Excel → T-S3-03 PPT → T-S3-04 Word 完整 → T-S3-05 NFR（S3 纵切顺序）。
