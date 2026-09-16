@@ -538,9 +538,16 @@ app.whenReady().then(() => {
   createWindow()
 
   initDataLayer().catch((err) => {
-    log.error(
-      { event: 'db-init-failed', err: err instanceof Error ? err.message : String(err) },
-      'data layer init failed'
+    const message = err instanceof Error ? err.message : String(err)
+    log.error({ event: 'db-init-failed', err: message }, 'data layer init failed')
+    // 架构意图（勿删）：初始化失败此前只写 pino stdout——打包后经 launchd/open
+    // 启动时 stdout 被丢弃，用户只能看到"窗口正常但所有操作报
+    // DATA_LAYER_NOT_READY"的僵尸态，根因完全不可见（验收期实测）。
+    // showErrorBox 保证任何启动方式下都能看到真实原因；应用以受限模式
+    // 继续运行（窗口/设置仍可用，数据类功能不可用）而非静默降级。
+    dialog.showErrorBox(
+      '数据层初始化失败',
+      `${message}\n\n应用将以受限模式继续运行：文件导入、对话与版本功能暂不可用。`
     )
   })
 

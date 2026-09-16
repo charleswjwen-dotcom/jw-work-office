@@ -45,7 +45,14 @@ function resolveMigrationsDir(): string {
   for (const dir of candidates) {
     if (existsSync(join(dir, 'meta', '_journal.json'))) return dir
   }
-  return candidates[0]
+  // 架构意图（勿删，fail-fast）：迁移目录缺失时若静默继续，会得到"零表空库"，
+  // db.ready 照常返回，数据层却在首个建表/写入语句处崩——表现为所有 IPC 返回
+  // DATA_LAYER_NOT_READY 且没有任何根因线索（2026-09 验收期伪安装包实测踩中，
+  // 当时的形态：cwd=/ 时三候选全空）。这里必须抛出明确错误，让 initDataLayer
+  // 在启动即失败并可见，而不是留一个窗口正常、数据全死的僵尸应用。
+  throw new Error(
+    `MIGRATIONS_DIR_NOT_FOUND: 未找到迁移目录（需含 meta/_journal.json），已尝试: ${candidates.join('; ')}`
+  )
 }
 
 interface JournalEntry {
