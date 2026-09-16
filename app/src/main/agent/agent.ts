@@ -13,6 +13,27 @@ export interface AgentRunResult {
   interceptions: string[]
 }
 
+// —— T-S2-08③ 工具调用状态事件：起止各一条，callId 与 LlmToolCall.id 对齐 ——
+// ok=false 表示产出错误 ChangeSet（TEXT_NOT_FOUND 等可恢复错误）；
+// 事件只做 UI 状态指示，不携带信任决策数据（架构 §5 单一事实源）。
+// 字段形态与 shared/ipc.ts 的 ChatStreamTool*Event 去掉 turnId 后一致，
+// 主进程 IPC 层只需展开补 turnId。
+export interface AgentToolStartEvent {
+  kind: 'tool-start'
+  toolName: string
+  callId: string
+}
+
+export interface AgentToolEndEvent {
+  kind: 'tool-end'
+  toolName: string
+  callId: string
+  ok: boolean
+  error?: string
+}
+
+export type AgentToolEvent = AgentToolStartEvent | AgentToolEndEvent
+
 // 运行选项（T-S2-04）：全部可选——verify-ts0-05.ts 等 PoC 存量调用
 // agent.run(prompt) 单参形态必须继续成立，不因接线升级而破坏。
 export interface AgentRunOptions {
@@ -21,8 +42,10 @@ export interface AgentRunOptions {
   maxSteps?: number
   // 本轮绑定的目标文档（架构 §3.3：ToolExecuteContext.documentId 的唯一注入点）。
   documentId?: string
-  // 流式 token 透传（T-S2-06 的 IPC 流式管道挂在此处，参数位先落）。
+  // 流式 token 透传（T-S2-08③ 的 chat:stream 管道挂在此处）。
   onToken?: (token: string) => void
+  // 工具调用起止状态回调（T-S2-08③）：invokeTool 前后各发一条。
+  onToolEvent?: (ev: AgentToolEvent) => void
 }
 
 const CONFIRMATION_ENFORCED_STATUS = 'pending'
@@ -70,8 +93,18 @@ export class Agent {
       })
 
       for (const call of completion.toolCalls) {
+        opts.onToolEvent?.({ kind: 'tool-start', toolName: call.name, callId: call.id })
         const cs = await this.invokeTool(call.name, call.arguments, opts.documentId, interceptions)
         changeSets.push(cs)
+        // ok 语义：仅错误 ChangeSet 判 false；enforceConfirmation 的拦截
+        // 不算失败（仍产出 pending ChangeSet，走正常信任流程）。
+        opts.onToolEvent?.({
+          kind: 'tool-end',
+          toolName: call.name,
+          callId: call.id,
+          ok: !cs.error,
+          ...(cs.error ? { error: cs.error.message } : {})
+        })
         messages.push({
           role: 'tool',
           content: JSON.stringify({

@@ -46,8 +46,8 @@ export class LlmGateway {
     this.provider = provider
   }
 
-  // onToken：流式透传（T-S2-06 的 IPC 流式管道将挂在此处）。
-  // 已知取舍：流中途失败重试时，token 会重复下发，由未来的 UI 层按消息 id 去重；
+  // onToken：流式透传（T-S2-08③ chat:stream 管道的上游数据源）。
+  // 已知取舍：流中途失败重试时，token 会重复下发，由 UI 层按轮清空去重；
   // 本层不缓存重排（保持 Provider→Gateway→UI 的单向流简单性）。
   async chat(
     req: ChatRequest,

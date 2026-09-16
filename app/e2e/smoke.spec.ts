@@ -77,6 +77,8 @@ test('数据层就绪：listFiles 返回数组（DB Utility 进程链路可用�
 // Agent 栈在 whenReady 后异步装配：就绪前 handler 抛 AGENT_NOT_READY，
 // evaluate 捕获后由 expect.poll 重试，直到栈就绪并返回 FILE_NOT_FOUND。
 // 测试环境未配置 MWO_LLM_* 时 Provider 工厂落在 mock 模式，无需真实端点。
+// T-S2-08③：第 3 参 turnId 由调用方生成（渲染层 crypto.randomUUID() 的
+// 契约形态）；未知文件在流式管道之前就失败，本轮不应产生任何流式事件。
 test('chatSend 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async () => {
   const window = await app.firstWindow()
   await window.waitForLoadState('domcontentloaded')
@@ -86,12 +88,14 @@ test('chatSend 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async
         window.evaluate(async () => {
           const api = (
             window as unknown as {
-              api?: { chatSend?: (fileId: string, prompt: string) => Promise<unknown> }
+              api?: {
+                chatSend?: (fileId: string, prompt: string, turnId: string) => Promise<unknown>
+              }
             }
           ).api
           if (!api?.chatSend) return 'NO_BRIDGE'
           try {
-            const result = (await api.chatSend('no-such-file', '把"a"替换成"b"')) as {
+            const result = (await api.chatSend('no-such-file', '把"a"替换成"b"', 'e2e-turn-1')) as {
               ok?: boolean
               error?: { code?: string }
             }
@@ -335,6 +339,40 @@ test('external:accept 通道可用：未知文件返回结构化 FILE_NOT_FOUND'
           if (!api?.acceptExternalChange) return 'NO_BRIDGE'
           try {
             const result = (await api.acceptExternalChange('no-such-file')) as {
+              ok?: boolean
+              error?: { code?: string }
+            }
+            if (result.ok) return 'OK_UNEXPECTED'
+            return result.error?.code ?? 'NO_ERROR_CODE'
+          } catch {
+            return 'NOT_READY'
+          }
+        }),
+      { timeout: 15000, intervals: [250, 500, 1000] }
+    )
+    .toBe('FILE_NOT_FOUND')
+})
+
+// T-S2-08 冒烟：右栏 Word 预览通道（PRD 2A.2 / 架构 §3.4 预览轨）。
+// preview:getHtml 走「DB Utility 查 file → file-worker mammoth 转换 →
+// 主进程白名单消毒」全链路；未知文件返回结构化 FILE_NOT_FOUND
+// （§3.1 IPC 错误规范化，主流程异常不 throw 到渲染层）。数据层就绪前
+// handler 返回 DATA_LAYER_NOT_READY 结构化错误，expect.poll 重试直到就绪。
+test('preview:getHtml 通道可用：未知文件返回结构化 FILE_NOT_FOUND', async () => {
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(
+      async () =>
+        window.evaluate(async () => {
+          const api = (
+            window as unknown as {
+              api?: { getPreviewHtml?: (fileId: string) => Promise<unknown> }
+            }
+          ).api
+          if (!api?.getPreviewHtml) return 'NO_BRIDGE'
+          try {
+            const result = (await api.getPreviewHtml('no-such-file')) as {
               ok?: boolean
               error?: { code?: string }
             }

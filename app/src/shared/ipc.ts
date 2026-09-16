@@ -25,6 +25,54 @@ export interface SearchInvokeHit {
   rank: number
 }
 
+// —— T-S2-08 右栏 Word 预览（PRD 2A.2 / 架构 §3.4 预览轨）——
+// html 是主进程消毒后的白名单 HTML（标签白名单 + 属性全剥离，见
+// html-sanitizer.ts），渲染层可直接 dangerouslySetInnerHTML 注入渲染；
+// 消毒后无内容走 ok:false + PREVIEW_HTML_REJECTED（显式失败，不静默空白）。
+export interface PreviewHtmlResult {
+  ok: boolean
+  error?: { code: string; message: string }
+  html?: string
+}
+
+// —— T-S2-08③ 对话流式输出与工具状态（PRD 2A.3 / 架构 §3.5 流式）——
+// chat:stream 是主进程→渲染层的单向事件（preload onChatStream 订阅）。
+// 事件按 turnId 归属轮次：chatSend 第 3 参由渲染层生成（crypto.randomUUID()），
+// 渲染层只消费"当前轮"的事件，跨轮串扰（迟到事件/多窗口广播）天然隔离。
+export interface ChatStreamTokenEvent {
+  turnId: string
+  kind: 'token'
+  // 文本增量，渲染层直接拼接。重试导致的重复下发由 UI 按轮清空兜底
+  // （取舍记录见 llm/gateway.ts，本层不缓存重排）。
+  text: string
+}
+
+// 工具调用起止各一条，callId 与 LlmToolCall.id 对齐，多工具按 id 配对。
+export interface ChatStreamToolStartEvent {
+  turnId: string
+  kind: 'tool-start'
+  toolName: string
+  callId: string
+}
+
+// 工具执行完成。ok=false 表示产出错误 ChangeSet（含 TEXT_NOT_FOUND 等
+// 可恢复错误），error 为其消息；ok=true 表示产出正常 pending ChangeSet。
+// 事件只做 UI 状态指示，不携带信任决策数据——确认仍以 ChangeSetCard
+// 展示的 pending ChangeSet 为唯一事实源（架构 §5）。
+export interface ChatStreamToolEndEvent {
+  turnId: string
+  kind: 'tool-end'
+  toolName: string
+  callId: string
+  ok: boolean
+  error?: string
+}
+
+export type ChatStreamEvent =
+  | ChatStreamTokenEvent
+  | ChatStreamToolStartEvent
+  | ChatStreamToolEndEvent
+
 // T-S2-04：对话一轮的结果。ChangeSet 只在此"过路"，落库与信任交互在 T-S2-05。
 // context 字段是隐私红线的可观测证据（§3.1/S2 门禁"ContextBuilder 不发送完整文件"）：
 // 渲染层与测试可据此断言"只发了节选，未发全文"。
@@ -63,9 +111,16 @@ export interface IpcApi {
   listFiles: (workspaceId?: string) => Promise<FileRecord[]>
   // FTS5 全文检索。
   searchFiles: (query: string) => Promise<SearchInvokeHit[]>
+  // —— T-S2-08 右栏 Word 预览（PRD 2A.2）——
+  // 取指定文件消毒后的预览 HTML（白名单标签，事件属性/脚本不可达渲染层）。
+  getPreviewHtml: (fileId: string) => Promise<PreviewHtmlResult>
   // 对指定文件发起一轮智能体对话（T-S2-04）。
-  // 流式 token 推送属 T-S2-06 流式管道，此处先落请求/响应形态。
-  chatSend: (fileId: string, prompt: string) => Promise<ChatTurnResult>
+  // turnId（第 3 参，渲染层 crypto.randomUUID() 生成）标记本轮：chat:stream
+  // 事件按此归属，渲染层只消费当前轮；返回值仍是整轮的结构化结果。
+  chatSend: (fileId: string, prompt: string, turnId: string) => Promise<ChatTurnResult>
+  // 订阅 chat:stream 流式事件（T-S2-08③：token / tool-start / tool-end）。
+  // 返回退订函数，渲染层在 effect cleanup 调用，避免监听器泄漏。
+  onChatStream: (listener: (ev: ChatStreamEvent) => void) => () => void
   // —— T-S2-05 信任交互（架构 §5）——
   // 列出当前 pending 的 ChangeSet（changes 已 resolve，含 >512KB 外置文件回读）。
   listPendingChangesets: () => Promise<ChangeSetView[]>

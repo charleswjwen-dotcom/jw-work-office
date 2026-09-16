@@ -1,6 +1,6 @@
 import type { FileRequest, FileResponse } from '../../shared/file-protocol'
 import { copyFileAtomicSync } from '../db/atomic-write'
-import { parseWordFile, splitParagraphs } from './word-parser'
+import { convertWordToHtml, parseWordFile, splitParagraphs } from './word-parser'
 import { applyParagraphEdits } from './word-writer'
 
 // 文件引擎 Utility 进程入口（架构 §2「文件引擎必须运行在 Utility 进程」，7A.1）。
@@ -37,6 +37,13 @@ async function handle(req: FileRequest): Promise<unknown> {
       const p = req.payload as { sourcePath: string }
       const parsed = await parseWordFile(p.sourcePath)
       return { paragraphs: splitParagraphs(parsed.text) }
+    }
+    case 'word.convertToHtml': {
+      // T-S2-08 右栏预览：mammoth HTML 转换（CPU 密集，与解析同进程隔离，
+      // 不阻塞主进程 IPC 与 SQLite 响应，架构 §2/7A.1）。只做忠实转换；
+      // 消毒在主进程完成（html-sanitizer.ts，架构 §2 安全红线）。
+      const p = req.payload as { sourcePath: string }
+      return { html: await convertWordToHtml(p.sourcePath) }
     }
     case 'file.copy': {
       // T-S2-06：字节级原子复制（.tmp→fsync→rename）。快照落盘与回溯替换共用。

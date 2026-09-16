@@ -5,6 +5,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createLogger } from './logger'
 import { DbClient } from './db/client'
 import { FileClient } from './files/client'
+import { sanitizePreviewHtml } from './files/html-sanitizer'
 import { importWordFile } from './import/import-service'
 import { resolveChatProvider } from './llm/provider-factory'
 import { LlmGateway } from './llm/gateway'
@@ -20,7 +21,7 @@ import { KeyStoreService } from './security/key-store'
 import { SafeStorageCrypto } from './security/safe-storage-crypto'
 import { ModelConfigService } from './llm/model-config-service'
 import type { ProviderStorePort } from './llm/provider-factory'
-import type { ProviderStatusView, SaveModelConfigInput } from '../shared/ipc'
+import type { ChatStreamEvent, ProviderStatusView, SaveModelConfigInput } from '../shared/ipc'
 
 const log = createLogger('main')
 
@@ -274,12 +275,28 @@ app.whenReady().then(() => {
 
   // 对话一轮（T-S2-04）：结构化结果，业务错误走 ChatTurnResult.error 而非 throw，
   // 渲染层无需 try/catch（§3.1 IPC 错误规范化）。未知 fileId → ok:false + FILE_NOT_FOUND。
-  ipcMain.handle('chat:send', async (_e, fileId: string, prompt: string) => {
-    if (!agentService) {
-      throw new Error('AGENT_NOT_READY')
+  // T-S2-08③ 流式：turnId（第 3 参）标记本轮，token/工具状态经 chat:stream
+  // 单向推回渲染层。isDestroyed 守卫窗口关闭后的迟到推送（否则访问已销毁的
+  // sender 会抛错）；最终返回值仍是整轮结构化结果，事件只承担过程指示。
+  ipcMain.handle(
+    'chat:send',
+    async (e, fileId: string, prompt: string, turnId: string) => {
+      if (!agentService) {
+        throw new Error('AGENT_NOT_READY')
+      }
+      const send = (ev: ChatStreamEvent): void => {
+        if (!e.sender.isDestroyed()) {
+          e.sender.send('chat:stream', ev)
+        }
+      }
+      return agentService.runTurn({
+        fileId,
+        prompt,
+        onToken: (text) => send({ turnId, kind: 'token', text }),
+        onToolEvent: (ev) => send({ turnId, ...ev })
+      })
     }
-    return agentService.runTurn({ fileId, prompt })
-  })
+  )
 
   // === T-S2-05 信任交互通道（架构 §5）===
   // 与 chat:send 同一错误规范：TrustFlowError(code) 统一降级为 { ok:false, error }，
@@ -487,6 +504,36 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('model:status', () => providerStatus)
+
+  // === T-S2-08 右栏 Word 预览（PRD 2A.2 / 架构 §3.4 预览轨）===
+  // file.get 定位工作文件 → 文件引擎 word.convertToHtml（Utility 进程，CPU
+  // 密集转换不阻塞主进程，架构 §2/7A.1）→ 主进程消毒（html-sanitizer，§2
+  // 安全红线：消毒必须在进入渲染进程之前）→ 消毒后无内容按显式失败处理，
+  // 不静默给空白页（清单验收"预览 diff 可见"）。错误规范与信任流一致。
+  ipcMain.handle('preview:getHtml', async (_e, fileId: string) => {
+    if (!dbClient || !fileClient) {
+      return { ok: false, error: { code: 'DATA_LAYER_NOT_READY', message: '数据层未就绪' } }
+    }
+    try {
+      const file = await dbClient.request('file.get', { id: fileId })
+      if (!file) {
+        return { ok: false, error: { code: 'FILE_NOT_FOUND', message: `文件 ${fileId} 不存在` } }
+      }
+      const { html } = await fileClient.request('word.convertToHtml', {
+        sourcePath: file.path
+      })
+      const sanitized = sanitizePreviewHtml(html)
+      if (!sanitized) {
+        return {
+          ok: false,
+          error: { code: 'PREVIEW_HTML_REJECTED', message: '消毒后无可渲染内容' }
+        }
+      }
+      return { ok: true, html: sanitized }
+    } catch (err) {
+      return { ok: false, error: toTrustError(err) }
+    }
+  })
 
   createWindow()
 

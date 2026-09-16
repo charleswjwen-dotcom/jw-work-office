@@ -91,3 +91,91 @@ body {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* —— T-S2-08 右栏 Word 预览排版（PRD 2A.2 / 架构 §3.4 预览轨）——
+   注入的 HTML 已在主进程过白名单消毒（html-sanitizer.ts），标签集合封闭
+   （p/h1-h6/列表/表格/行内强调/img），此处只补排版：Tailwind preflight 抹掉
+   了默认列表符号与标题字号，需在此恢复文档语义。
+   .mwo-pv-hit：待审变更段落的琥珀色覆盖层——「diff 可见」是信任交互（§5）
+   的验收项；色值走 --amber 系 token，深浅色自动适配。 */
+.mwo-preview {
+  max-width: 72ch;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--fg-body);
+  overflow-wrap: break-word;
+}
+.mwo-preview p {
+  margin: 0 0 0.75em;
+}
+.mwo-preview h1,
+.mwo-preview h2,
+.mwo-preview h3,
+.mwo-preview h4,
+.mwo-preview h5,
+.mwo-preview h6 {
+  margin: 1.3em 0 0.5em;
+  color: var(--fg-head);
+  line-height: 1.35;
+}
+.mwo-preview h1 {
+  font-size: 1.3em;
+}
+.mwo-preview h2 {
+  font-size: 1.18em;
+}
+.mwo-preview h3 {
+  font-size: 1.08em;
+}
+.mwo-preview h4,
+.mwo-preview h5,
+.mwo-preview h6 {
+  font-size: 1em;
+}
+.mwo-preview ul {
+  list-style: disc;
+  margin: 0 0 0.75em;
+  padding-left: 1.6em;
+}
+.mwo-preview ol {
+  list-style: decimal;
+  margin: 0 0 0.75em;
+  padding-left: 1.6em;
+}
+.mwo-preview li {
+  margin: 0.2em 0;
+}
+.mwo-preview blockquote {
+  margin: 0 0 0.75em;
+  padding: 0.2em 0 0.2em 0.9em;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+.mwo-preview table {
+  margin: 0 0 0.75em;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mwo-preview td,
+.mwo-preview th {
+  border: 1px solid var(--border-sub);
+  padding: 0.3em 0.55em;
+  text-align: left;
+  vertical-align: top;
+}
+.mwo-preview th {
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+.mwo-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+.mwo-pv-hit {
+  background: var(--amber-soft);
+  outline: 1px solid color-mix(in oklch, var(--amber) 40%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 0.1em 0.3em;
+  margin: 0 -0.3em;
+}

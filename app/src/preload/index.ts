@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { IpcApi } from '../shared/ipc'
+import type { ChatStreamEvent, IpcApi } from '../shared/ipc'
 
 // preload 白名单桥接：每个方法都是对主进程 IPC channel 的窄封装。
 // 渲染层拿到的 window.api 只有这些方法，碰不到 Node/fs/ipcRenderer 全量能力（安全红线）。
@@ -9,7 +9,20 @@ const api: IpcApi = {
   importWord: () => ipcRenderer.invoke('file:importWord'),
   listFiles: (workspaceId) => ipcRenderer.invoke('file:list', workspaceId),
   searchFiles: (query) => ipcRenderer.invoke('file:search', query),
-  chatSend: (fileId, prompt) => ipcRenderer.invoke('chat:send', fileId, prompt),
+  // —— T-S2-08 右栏 Word 预览：只回传主进程消毒后的白名单 HTML ——
+  getPreviewHtml: (fileId) => ipcRenderer.invoke('preview:getHtml', fileId),
+  chatSend: (fileId, prompt, turnId) =>
+    ipcRenderer.invoke('chat:send', fileId, prompt, turnId),
+  // —— T-S2-08③ 流式事件：主进程单向推送，退订函数供渲染层 effect cleanup ——
+  onChatStream: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, ev: ChatStreamEvent): void => {
+      listener(ev)
+    }
+    ipcRenderer.on('chat:stream', handler)
+    return () => {
+      ipcRenderer.removeListener('chat:stream', handler)
+    }
+  },
   listPendingChangesets: () => ipcRenderer.invoke('changeset:listPending'),
   acceptChangeset: (id, acceptedChangeIds) =>
     ipcRenderer.invoke('changeset:accept', id, acceptedChangeIds),

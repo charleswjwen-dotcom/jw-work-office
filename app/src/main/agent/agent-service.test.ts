@@ -16,6 +16,7 @@ import { ToolRegistry } from '../tools/registry'
 import { createReplaceTextTool } from '../tools/replace-text-tool'
 import { DocumentSession } from './document-session'
 import { AgentService } from './agent-service'
+import type { AgentToolEvent } from './agent'
 
 // T-S2-04 集成测试：真实 SQLite + 真实 mammoth + MockChatProvider，
 // 跑通「载文档 → 建上下文（隐私红线）→ Agent 循环 → pending ChangeSet」全链路。
@@ -166,6 +167,38 @@ describe('AgentService integration（T-S2-04 验收）', () => {
     const disk = await parseWordFile(imp.file.path)
     expect(disk.text).toContain('缓慢')
     expect(disk.text).not.toContain('强劲')
+  })
+
+  it('T-S2-08③ 流式透传：token 渐进流出，工具起止事件按 callId 配对', async () => {
+    const imp = await importDocx('stream.docx', ['公司季度报告草稿：营收增长缓慢，需要改进。'])
+    const { agentService } = buildStack()
+
+    const tokens: string[] = []
+    const toolEvents: AgentToolEvent[] = []
+    const result = await agentService.runTurn({
+      fileId: imp.file.id,
+      prompt: '把"缓慢"替换成"强劲"',
+      onToken: (t) => tokens.push(t),
+      onToolEvent: (ev) => toolEvents.push(ev)
+    })
+
+    expect(result.ok).toBe(true)
+    // Mock 两步循环：第一步工具轮（content 空，不流 token，只发工具事件），
+    // 第二步总结轮（content 按小包流出）——token 拼接后与终值一致。
+    expect(tokens.length).toBeGreaterThan(1)
+    expect(tokens.join('')).toBe(result.finalMessage)
+
+    // 工具事件起止配对：start → end(ok)，callId 与 LlmToolCall.id 对齐
+    expect(toolEvents).toHaveLength(2)
+    expect(toolEvents[0]).toMatchObject({ kind: 'tool-start', toolName: 'replaceText' })
+    expect(toolEvents[1]).toMatchObject({ kind: 'tool-end', toolName: 'replaceText', ok: true })
+    // 联合类型先用 kind 判别式窄化，再访问 tool-end 独有的 error 字段
+    const endEvent = toolEvents[1]
+    if (endEvent.kind !== 'tool-end') {
+      throw new Error('第二个工具事件应为 tool-end')
+    }
+    expect(endEvent.callId).toBe(toolEvents[0].callId)
+    expect(endEvent.error).toBeUndefined()
   })
 
   it('未知文件：ok:false + FILE_NOT_FOUND，不产生 LLM 用量', async () => {

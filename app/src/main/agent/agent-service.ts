@@ -1,5 +1,5 @@
 import { Agent } from './agent'
-import type { AgentRunResult } from './agent'
+import type { AgentRunResult, AgentToolEvent } from './agent'
 import { DocumentSessionError } from './document-session'
 import type { DocumentSession } from './document-session'
 import type { LlmGateway } from '../llm/gateway'
@@ -36,6 +36,8 @@ export interface AgentTurnParams {
   fileId: string
   prompt: string
   onToken?: (token: string) => void
+  // T-S2-08③：工具调用起止状态透传，供 IPC 层包装成 chat:stream 事件。
+  onToolEvent?: (ev: AgentToolEvent) => void
 }
 
 export interface AgentServiceDeps {
@@ -85,7 +87,8 @@ export class AgentService {
     try {
       run = await this.agent.run(`${params.prompt}\n\n${built.block}`, {
         documentId: params.fileId,
-        onToken: params.onToken
+        onToken: params.onToken,
+        onToolEvent: params.onToolEvent
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

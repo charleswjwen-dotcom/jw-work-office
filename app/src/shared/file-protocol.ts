@@ -96,6 +96,13 @@ export interface FileCopyPayload {
   destPath: string
 }
 
+// —— T-S2-08 Word HTML 预览（架构 §3.4 双轨之"预览轨"）——
+// mammoth convertToHtml 的忠实转换结果（未经消毒——消毒是主进程职责，
+// 必须在进入渲染进程之前完成，架构 §2 安全红线）。
+export interface WordConvertToHtmlResult {
+  html: string
+}
+
 export type FileRequestMap = {
   'file.ready': { request: undefined; response: { ok: true } }
   'word.parse': { request: WordParseRequestPayload; response: WordParseResult }
@@ -106,6 +113,10 @@ export type FileRequestMap = {
   'word.applyParagraphEdits': {
     request: WordApplyParagraphEditsPayload
     response: WordApplyParagraphEditsResult
+  }
+  'word.convertToHtml': {
+    request: WordParseRequestPayload
+    response: WordConvertToHtmlResult
   }
   'file.copy': { request: FileCopyPayload; response: { byteSize: number } }
 }

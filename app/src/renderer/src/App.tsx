@@ -6,19 +6,35 @@ import { ChangeSetCard } from '@renderer/components/chat/ChangeSetCard'
 import { VersionHistoryPanel } from '@renderer/components/chat/VersionHistoryPanel'
 import { ExternalChangePanel } from '@renderer/components/chat/ExternalChangePanel'
 import { ManualEditPanel } from '@renderer/components/chat/ManualEditPanel'
+import { WordPreviewPanel } from '@renderer/components/chat/WordPreviewPanel'
 import { ModelConfigPanel } from '@renderer/components/settings/ModelConfigPanel'
 import { useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
+import type { AtomicChange } from '@shared/agent'
 import type { FileRecord } from '@shared/db-protocol'
 
 type IpcState = 'checking' | 'ok' | 'error'
 
-// 会话气泡（T-S2-04 请求/响应形态；流式输出属 T-S2-06）。
+// 会话气泡（T-S2-04 请求/响应形态 + T-S2-08③ 流式过程态）。
 // role=system 专用于错误与拦截提示，与 assistant 的正常回复区分。
 interface ChatBubble {
   id: number
   role: 'user' | 'assistant' | 'system'
   text: string
+  // T-S2-08③ 流式轮次的工具状态行（非流式气泡无此字段）。
+  toolLines?: ToolStatusLine[]
+  // 流式进行中：token/工具事件渐进填充，终值由 onSuccess 的结构化结果覆盖。
+  streaming?: boolean
+}
+
+// 工具调用状态行（T-S2-08③）：⏳ 执行中 / ✅ 产出 pending ChangeSet /
+// ❌ 产出错误 ChangeSet（TEXT_NOT_FOUND 等可恢复错误）。仅作状态指示，
+// 信任决策以 ChangeSetCard 展示的 pending ChangeSet 为唯一事实源（架构 §5）。
+interface ToolStatusLine {
+  callId: string
+  toolName: string
+  status: 'running' | 'ok' | 'error'
+  error?: string
 }
 
 function formatSize(bytes: number): string {
@@ -34,19 +50,59 @@ function formatTime(ms: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`
 }
 
+// FTS5 snippet() 以 [ ] 包裹命中词：渲染为 <mark> 高亮（T-S2-08）。
+// 标记对可能被 snippet 截断切断——未闭合时按原文显示（诚实降级，不吞字）。
+function renderSearchSnippet(snippet: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  let rest = snippet
+  let key = 0
+  while (rest.length > 0) {
+    const open = rest.indexOf('[')
+    if (open === -1) {
+      nodes.push(rest)
+      break
+    }
+    if (open > 0) nodes.push(rest.slice(0, open))
+    const close = rest.indexOf(']', open + 1)
+    if (close === -1) {
+      nodes.push(rest.slice(open))
+      break
+    }
+    nodes.push(
+      <mark key={key} className="rounded-xs bg-amber-soft px-0.5 text-text-body">
+        {rest.slice(open + 1, close)}
+      </mark>
+    )
+    key += 1
+    rest = rest.slice(close + 1)
+  }
+  return nodes
+}
+
 function App(): React.JSX.Element {
   const [ipcState, setIpcState] = useState<IpcState>('checking')
   const [dark, setDark] = useState(false)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [bubbles, setBubbles] = useState<ChatBubble[]>([])
   const [prompt, setPrompt] = useState('')
+  // 左栏搜索（T-S2-08）：输入防抖 250ms 后调 FTS5。trigram 分词支持中英文
+  // 子串检索，metadata 列含文件名，故「按名称/按关键词」共用一条检索路径。
+  const [searchText, setSearchText] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   // 手动微调面板重挂载序号（T-S2-05A）：提交成功时 +1，以 key 重挂载清空
   // 草稿（与 VersionHistoryPanel 切换文件重挂载的模式同源）。
   const [manualResetSeq, setManualResetSeq] = useState(0)
+  // 右栏页签（T-S2-08）：预览为默认态——三栏骨架的主叙事是「左列表 / 中会话 /
+  // 右预览」，手动微调作为第二页签；两页签保持挂载仅切 hidden，防草稿丢失。
+  const [rightTab, setRightTab] = useState<'preview' | 'manual'>('preview')
   // 模型设置面板（T-S2-07）：多模型配置入口，密钥加解密全部在主进程闭环。
   const [modelPanelOpen, setModelPanelOpen] = useState(false)
   const bubbleSeq = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // T-S2-08③ 流式轮次登记：chatSend 发起时写入 { turnId, bubbleId }，
+  // chat:stream 事件按 turnId 归属本轮；onSuccess/onError 统一置 null 封轮，
+  // 迟到事件（重试重复 token 等）由此守卫自然丢弃。
+  const streamTurnRef = useRef<{ turnId: string; bubbleId: number } | null>(null)
 
   const layout = useUiStore((s) => s.layout)
   const viewMode = useUiStore((s) => s.viewMode)
@@ -77,20 +133,69 @@ function App(): React.JSX.Element {
   const selectedFile: FileRecord | null =
     files.find((f) => f.id === selectedFileId) ?? files[0] ?? null
 
+  // 搜索态（T-S2-08）：无关键词时 enabled 守卫住不发起 IPC；空串/纯空白在
+  // 主进程 SqliteFtsSearchRepository.query 已短路为 []，双层兜底。
+  const searching = debouncedSearch.length > 0
+  const searchQuery = useQuery({
+    queryKey: ['file-search', debouncedSearch],
+    queryFn: () => window.api.searchFiles(debouncedSearch),
+    enabled: searching
+  })
+  const searchHits = searchQuery.data ?? null
+  // 搜索态下列表收敛到命中文件；snippet 为 FTS5 snippet() 的 [ ] 标记文本。
+  const visibleFiles =
+    searching && searchHits
+      ? files.filter((f) => searchHits.some((h) => h.fileId === f.id))
+      : files
+  // useMemo 固定引用：避免每渲染新建 Map 触发下方列表无谓重排。
+  const snippetMap = useMemo(() => {
+    const m = new Map<string, string>()
+    if (searching && searchHits) for (const h of searchHits) m.set(h.fileId, h.snippet)
+    return m
+  }, [searching, searchHits])
+
+  // 右栏预览 diff 覆盖层（T-S2-08）：当前文件全部待审变更（AI / 手动 / 外部
+  // 三种来源合并），由 WordPreviewPanel 按 before 文本匹配预览段落高亮。
+  const pendingChangesForFile = useMemo(() => {
+    if (!selectedFile) return []
+    const changes: AtomicChange[] = []
+    for (const cs of pendingChangesets) {
+      if (cs.fileId === selectedFile.id) changes.push(...cs.changes)
+    }
+    return changes
+  }, [pendingChangesets, selectedFile])
+
   const pushBubble = (role: ChatBubble['role'], text: string): void => {
     bubbleSeq.current += 1
     setBubbles((prev) => [...prev, { id: bubbleSeq.current, role, text }])
   }
 
-  // 对话一轮（T-S2-04）：ChangeSet 由主进程 AgentService 落库，
-  // 渲染层只负责刷新 pending 卡片，不在本地拼装信任数据。
+  // 对话一轮（T-S2-04 请求/响应 + T-S2-08③ 流式过程）：ChangeSet 由主进程
+  // AgentService 落库，渲染层只负责刷新 pending 卡片，不在本地拼装信任数据。
+  // 终值收口：成功时以结构化 finalMessage 覆盖流式拼接文本（兜底重试重复
+  // token 的取舍，见 gateway 注释）；失败时保留已流出的部分文本 + 系统错误气泡。
   const sendMutation = useMutation({
-    mutationFn: (vars: { fileId: string; text: string }) =>
-      window.api.chatSend(vars.fileId, vars.text),
+    mutationFn: (vars: { fileId: string; text: string; turnId: string }) =>
+      window.api.chatSend(vars.fileId, vars.text, vars.turnId),
     onSuccess: (res) => {
-      if (res.ok) {
-        pushBubble('assistant', res.finalMessage || '本轮完成（无文本回复）。')
-      } else {
+      const st = streamTurnRef.current
+      streamTurnRef.current = null
+      if (st) {
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.id === st.bubbleId
+              ? {
+                  ...b,
+                  text: res.ok
+                    ? res.finalMessage || b.text || '本轮完成（无文本回复）。'
+                    : b.text,
+                  streaming: false
+                }
+              : b
+          )
+        )
+      }
+      if (!res.ok) {
         pushBubble(
           'system',
           `请求失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
@@ -99,7 +204,16 @@ function App(): React.JSX.Element {
       for (const tip of res.interceptions) pushBubble('system', `系统拦截：${tip}`)
       void qc.invalidateQueries({ queryKey: ['changesets'] })
     },
-    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+    onError: (err: Error) => {
+      const st = streamTurnRef.current
+      streamTurnRef.current = null
+      if (st) {
+        setBubbles((prev) =>
+          prev.map((b) => (b.id === st.bubbleId ? { ...b, streaming: false } : b))
+        )
+      }
+      pushBubble('system', `通信失败：${err.message}`)
+    }
   })
 
   // 信任交互（架构 §5）：接受成功后基线已刷新，文件列表必须重取。
@@ -122,6 +236,8 @@ function App(): React.JSX.Element {
       void qc.invalidateQueries({ queryKey: ['version-diff'] })
       // T-S2-05A：正文已变，右栏手动微调的段落数据同步失效。
       void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+      // T-S2-08：正文已写入，右栏预览 HTML 同步失效（重转 mammoth + 重放 diff 覆盖层）。
+      void qc.invalidateQueries({ queryKey: ['preview-html'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -164,6 +280,8 @@ function App(): React.JSX.Element {
       void qc.invalidateQueries({ queryKey: ['files'] })
       // T-S2-05A：正文已回退，右栏手动微调的段落数据同步失效。
       void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+      // T-S2-08：正文已回退，右栏预览 HTML 同步失效。
+      void qc.invalidateQueries({ queryKey: ['preview-html'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -231,6 +349,8 @@ function App(): React.JSX.Element {
       void qc.invalidateQueries({ queryKey: ['versions'] })
       void qc.invalidateQueries({ queryKey: ['version-diff'] })
       void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+      // T-S2-08：基线已前移，右栏预览 HTML 同步失效。
+      void qc.invalidateQueries({ queryKey: ['preview-html'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -250,6 +370,8 @@ function App(): React.JSX.Element {
       void qc.invalidateQueries({ queryKey: ['external-detections'] })
       void qc.invalidateQueries({ queryKey: ['files'] })
       void qc.invalidateQueries({ queryKey: ['paragraphs'] })
+      // T-S2-08：基线已重定，右栏预览 HTML 同步失效。
+      void qc.invalidateQueries({ queryKey: ['preview-html'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
   })
@@ -269,8 +391,15 @@ function App(): React.JSX.Element {
     const text = prompt.trim()
     if (!selectedFile || !text || sendMutation.isPending) return
     pushBubble('user', text)
+    // T-S2-08③：生成本轮 turnId 并预置空流式气泡——token/工具状态事件
+    // 渐进填充该气泡，IPC 结构化结果返回后由 onSuccess 终值收口。
+    const turnId = crypto.randomUUID()
+    bubbleSeq.current += 1
+    const bubbleId = bubbleSeq.current
+    streamTurnRef.current = { turnId, bubbleId }
+    setBubbles((prev) => [...prev, { id: bubbleId, role: 'assistant', text: '', streaming: true }])
     setPrompt('')
-    sendMutation.mutate({ fileId: selectedFile.id, text })
+    sendMutation.mutate({ fileId: selectedFile.id, text, turnId })
   }
 
   // Enter 发送、Shift+Enter 换行；isComposing 让路中文输入法选词阶段。
@@ -291,6 +420,46 @@ function App(): React.JSX.Element {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
   }, [dark])
+
+  // T-S2-08③ 流式事件订阅：挂载一次，cleanup 退订。handler 只引用
+  // streamTurnRef / setBubbles（跨渲染稳定），不捕获组件态，重渲染不重注册；
+  // setState 全部发生在事件回调内（异步于 effect body），非同步副作用。
+  useEffect(() => {
+    const unsubscribe = window.api.onChatStream((ev) => {
+      const st = streamTurnRef.current
+      // 跨轮守卫：迟到事件/其他窗口广播一律丢弃，只消费当前轮。
+      if (!st || ev.turnId !== st.turnId) return
+      setBubbles((prev) =>
+        prev.map((b) => {
+          if (b.id !== st.bubbleId) return b
+          if (ev.kind === 'token') {
+            return { ...b, text: b.text + ev.text }
+          }
+          if (ev.kind === 'tool-start') {
+            const lines: ToolStatusLine[] = [
+              ...(b.toolLines ?? []),
+              { callId: ev.callId, toolName: ev.toolName, status: 'running' }
+            ]
+            return { ...b, toolLines: lines }
+          }
+          const lines: ToolStatusLine[] = (b.toolLines ?? []).map((l) =>
+            l.callId === ev.callId
+              ? { ...l, status: ev.ok ? 'ok' : 'error', ...(ev.error ? { error: ev.error } : {}) }
+              : l
+          )
+          return { ...b, toolLines: lines }
+        })
+      )
+    })
+    return unsubscribe
+  }, [])
+
+  // 搜索防抖（T-S2-08）：250ms 停顿后才更新关键词触发 FTS5 查询，
+  // 避免逐键抖动 IPC（trigram 查询本身轻，防抖只为收敛请求频率）。
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchText.trim()), 250)
+    return () => clearTimeout(t)
+  }, [searchText])
 
   useEffect(() => {
     const onResize = (): void => applyWindowWidth(window.innerWidth)
@@ -379,16 +548,27 @@ function App(): React.JSX.Element {
               {importMutation.isPending ? '导入中…' : '导入 Word…'}
             </Button>
             <input
-              disabled
-              placeholder="搜索文件 / 关键词（FTS5，待后续任务）"
-              className="mb-3 w-full rounded-sm border border-border bg-surface px-2.5 py-1.5 text-xs outline-none placeholder:text-text-faint"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="搜索文件名 / 正文关键词"
+              aria-label="搜索文件"
+              className="mb-3 w-full rounded-sm border border-border bg-surface px-2.5 py-1.5 text-xs outline-none placeholder:text-text-faint focus:border-border-strong"
             />
             {files.length === 0 ? (
               <p className="text-xs text-text-muted">暂无文件，点击「导入 Word…」开始。</p>
+            ) : searching && searchQuery.isError ? (
+              <p className="text-xs text-red">
+                搜索失败：{searchQuery.error?.message ?? '未知错误'}
+              </p>
+            ) : searching && searchQuery.isPending ? (
+              <p className="text-xs text-text-muted">搜索中…</p>
+            ) : searching && visibleFiles.length === 0 ? (
+              <p className="text-xs text-text-muted">没有匹配「{debouncedSearch}」的文件。</p>
             ) : (
               <ul className="space-y-1">
-                {files.map((f) => {
+                {visibleFiles.map((f) => {
                   const active = f.id === selectedFile?.id
+                  const snippet = snippetMap.get(f.id)
                   return (
                     <li key={f.id}>
                       <button
@@ -400,9 +580,15 @@ function App(): React.JSX.Element {
                         }`}
                       >
                         <span className="block truncate font-medium">{f.name}</span>
-                        <span className="mt-0.5 block text-[11px] text-text-muted">
-                          {formatSize(f.size)} · {formatTime(f.modifiedAt)}
-                        </span>
+                        {snippet !== undefined ? (
+                          <span className="mt-0.5 block text-[11px] leading-relaxed text-text-muted">
+                            {renderSearchSnippet(snippet)}
+                          </span>
+                        ) : (
+                          <span className="mt-0.5 block text-[11px] text-text-muted">
+                            {formatSize(f.size)} · {formatTime(f.modifiedAt)}
+                          </span>
+                        )}
                       </button>
                     </li>
                   )
@@ -472,7 +658,15 @@ function App(): React.JSX.Element {
                           : 'border border-amber/40 bg-amber-soft text-amber'
                     }`}
                   >
+                    {/* T-S2-08③ 工具状态行：callId 配对起止事件，⏳/✅/❌ 指示执行态。 */}
+                    {b.toolLines?.map((l) => (
+                      <p key={l.callId} className="mb-1 text-xs text-text-muted">
+                        {l.status === 'running' ? '⏳' : l.status === 'ok' ? '✅' : '❌'} {l.toolName}
+                        {l.status === 'error' && l.error ? `：${l.error}` : ''}
+                      </p>
+                    ))}
                     {b.text}
+                    {b.streaming ? <span className="ml-0.5 animate-pulse">▍</span> : null}
                   </div>
                 </div>
               ))}
@@ -549,25 +743,72 @@ function App(): React.JSX.Element {
         )}
 
         <section
-          aria-label="手动微调与工件"
+          aria-label="预览与工件"
           className="flex min-h-0 flex-col border-l border-border"
           hidden={layout.rightCollapsed}
         >
-          <h2 className="shrink-0 border-b border-border px-4 py-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            手动微调 / 工件
-          </h2>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
-            {selectedFile ? (
-              <ManualEditPanel
-                key={`${selectedFile.id}:${manualResetSeq}`}
-                file={selectedFile}
-                busy={manualSubmitMutation.isPending}
-                onSubmit={(editedParagraphs) =>
-                  manualSubmitMutation.mutate({ fileId: selectedFile.id, editedParagraphs })
-                }
-              />
+          <div
+            role="tablist"
+            aria-label="右栏视图"
+            className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-1.5"
+          >
+            <button
+              role="tab"
+              id="mwo-rt-preview"
+              aria-selected={rightTab === 'preview'}
+              aria-controls="mwo-rt-panel"
+              onClick={() => setRightTab('preview')}
+              className={`rounded-xs px-2.5 py-1 text-xs font-medium ${
+                rightTab === 'preview'
+                  ? 'bg-accent-soft text-accent-text'
+                  : 'text-text-muted hover:bg-surface-hover'
+              }`}
+            >
+              预览
+            </button>
+            <button
+              role="tab"
+              id="mwo-rt-manual"
+              aria-selected={rightTab === 'manual'}
+              aria-controls="mwo-rt-panel"
+              onClick={() => setRightTab('manual')}
+              className={`rounded-xs px-2.5 py-1 text-xs font-medium ${
+                rightTab === 'manual'
+                  ? 'bg-accent-soft text-accent-text'
+                  : 'text-text-muted hover:bg-surface-hover'
+              }`}
+            >
+              手动微调
+            </button>
+          </div>
+          <div
+            id="mwo-rt-panel"
+            role="tabpanel"
+            aria-labelledby={rightTab === 'preview' ? 'mwo-rt-preview' : 'mwo-rt-manual'}
+            className="min-h-0 flex-1 overflow-auto p-4"
+          >
+            {!selectedFile ? (
+              <p className="text-sm text-text-muted">先在左侧选择文件后可预览或手动微调。</p>
             ) : (
-              <p className="text-sm text-text-muted">先在左侧选择文件后可手动微调段落。</p>
+              <>
+                <div hidden={rightTab !== 'preview'}>
+                  <WordPreviewPanel
+                    key={selectedFile.id}
+                    file={selectedFile}
+                    pendingChanges={pendingChangesForFile}
+                  />
+                </div>
+                <div hidden={rightTab !== 'manual'}>
+                  <ManualEditPanel
+                    key={`${selectedFile.id}:${manualResetSeq}`}
+                    file={selectedFile}
+                    busy={manualSubmitMutation.isPending}
+                    onSubmit={(editedParagraphs) =>
+                      manualSubmitMutation.mutate({ fileId: selectedFile.id, editedParagraphs })
+                    }
+                  />
+                </div>
+              </>
             )}
           </div>
         </section>

@@ -76,6 +76,23 @@ export async function parseWordFile(sourcePath: string): Promise<WordParseResult
   }
 }
 
+// T-S2-08 右栏预览：mammoth HTML 转换（架构 §3.4 双轨之"预览轨"）。
+// 与 parseWordFile（抽取轨）同源同约定：让 mammoth 直接读盘，不在内存多存
+// 一份完整 .docx 缓冲。职责边界：本函数只做**忠实转换**，输出未经消毒的
+// 原始 HTML——消毒是主进程职责（html-sanitizer.ts），必须在进入渲染进程
+// 之前执行（架构 §2 安全红线：渲染层不承担安全判断）。
+export async function convertWordToHtml(sourcePath: string): Promise<string> {
+  try {
+    const { value } = await mammoth.convertToHtml({ path: sourcePath })
+    return value ?? ''
+  } catch (err) {
+    // 与 parseWordFile 同语义：预览失败必须携带可读原因，绝不静默降级为空白页
+    // （清单 T-S2-08 验收"预览 diff 可见"——失败要显式可见，而非假成功）。
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new Error(`WORD_PREVIEW_FAILED: ${reason}`, { cause: err })
+  }
+}
+
 // 供测试与上层复用：仅读取原始字节（不解析），用于 size 与"文件存在性"校验。
 export async function readFileBytes(sourcePath: string): Promise<Buffer> {
   return readFile(sourcePath)
