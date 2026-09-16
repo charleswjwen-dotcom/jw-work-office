@@ -179,3 +179,63 @@ body {
   padding: 0.1em 0.3em;
   margin: 0 -0.3em;
 }
+
+/* —— 加载骨架（体验优化）：shimmer 扫光替代纯文本加载态 ——
+   底色 --bg-hover / 扫光 --bg-surface 半透明，深浅色自动适配；
+   prefers-reduced-motion 下停用扫光（无障碍口径）。 */
+@keyframes mwo-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.mwo-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+}
+.mwo-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--bg-surface) 65%, transparent),
+    transparent
+  );
+  animation: mwo-shimmer 1.4s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mwo-skeleton::after {
+    animation: none;
+  }
+}
+
+/* —— 撤销 Toast 倒计时（体验优化）：TTL 剩余量以底部细进度条可视化 ——
+   scaleX 走合成器不触发布局；时长默认 10s，由 Toast 内联
+   animation-duration=UNDO_TTL_MS 覆写（同源防漂移）；
+   prefers-reduced-motion 下停用。 */
+@keyframes mwo-undo-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.mwo-undo-bar {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  transform-origin: left;
+  background: var(--accent);
+  animation: mwo-undo-countdown 10s linear forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mwo-undo-bar {
+    animation: none;
+  }
+}

@@ -9,12 +9,14 @@ import {
   type PendingChange,
   type RightPanel,
   type TrustMode,
+  type UndoAction,
   type UiPrefs,
   type UiState,
   type ViewMode
 } from './types'
 
-const UNDO_TTL_MS = 10_000
+// 撤销窗口时长：TTL 修剪与 Toast 倒计时进度条共用（Toast 按同值换算剩余百分比）。
+export const UNDO_TTL_MS = 10_000
 
 interface UiActions {
   setViewMode: (mode: ViewMode) => void
@@ -31,7 +33,7 @@ interface UiActions {
   applyWindowWidth: (width: number) => void
 
   setPending: (pending: PendingChange | null) => void
-  pushUndo: (lastAction: string, now?: number) => void
+  pushUndo: (lastAction: string, action: UndoAction, now?: number) => void
   clearUndo: () => void
   pruneUndo: (now?: number) => void
 
@@ -88,8 +90,8 @@ export const useUiStore = create<UiStore>()(
 
       setPending: (pending) => set({ pending }),
 
-      pushUndo: (lastAction, now = Date.now()) =>
-        set({ undo: { lastAction, expiresAt: now + UNDO_TTL_MS } }),
+      pushUndo: (lastAction, action, now = Date.now()) =>
+        set({ undo: { lastAction, action, expiresAt: now + UNDO_TTL_MS } }),
       clearUndo: () => set({ undo: null }),
       pruneUndo: (now = Date.now()) => {
         const { undo } = get()

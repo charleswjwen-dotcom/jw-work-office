@@ -66,10 +66,17 @@ describe('useUiStore', () => {
     useUiStore.getState().toggleLeftCollapsed()
   })
 
-  it('records undo with TTL and prunes when expired', () => {
-    useUiStore.getState().pushUndo('apply-change-set', 1_000)
+  it('records undo with TTL, carries the revert action and prunes when expired', () => {
+    useUiStore
+      .getState()
+      .pushUndo(
+        'apply-change-set',
+        { type: 'restore-version', fileId: 'f1', versionId: 'v1' },
+        1_000
+      )
     const undo = useUiStore.getState().undo
     expect(undo?.lastAction).toBe('apply-change-set')
+    expect(undo?.action).toEqual({ type: 'restore-version', fileId: 'f1', versionId: 'v1' })
     expect(undo?.expiresAt).toBe(11_000)
     useUiStore.getState().pruneUndo(11_001)
     expect(useUiStore.getState().undo).toBeNull()

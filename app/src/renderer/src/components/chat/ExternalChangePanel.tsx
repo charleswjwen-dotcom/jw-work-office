@@ -62,7 +62,10 @@ function DiffPreview({
 
   if (diffQuery.isPending)
     return (
-      <p className="border-t border-border-sub px-3.5 py-2 text-xs text-text-muted">正在生成 diff…</p>
+      <div aria-busy="true" className="space-y-2 border-t border-border-sub px-3.5 py-2.5">
+        <div className="mwo-skeleton h-3 w-5/6" />
+        <div className="mwo-skeleton h-3 w-2/3" />
+      </div>
     )
   if (diffQuery.isError)
     return (

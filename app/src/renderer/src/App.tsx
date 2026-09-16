@@ -8,7 +8,7 @@ import { ExternalChangePanel } from '@renderer/components/chat/ExternalChangePan
 import { ManualEditPanel } from '@renderer/components/chat/ManualEditPanel'
 import { WordPreviewPanel } from '@renderer/components/chat/WordPreviewPanel'
 import { ModelConfigPanel } from '@renderer/components/settings/ModelConfigPanel'
-import { useUiStore } from '@renderer/store/ui-store'
+import { UNDO_TTL_MS, useUiStore } from '@renderer/store/ui-store'
 import { LAYOUT_LIMITS } from '@renderer/store/types'
 import type { AtomicChange } from '@shared/agent'
 import type { FileRecord } from '@shared/db-protocol'
@@ -99,6 +99,9 @@ function App(): React.JSX.Element {
   const [modelPanelOpen, setModelPanelOpen] = useState(false)
   const bubbleSeq = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 智能滚动的贴底标记：true = 用户在底部（跟随新内容），false = 用户已上滑
+  // （不追新）。由 onScroll 维护——滚动位置进 ref 不进 state，避免高频重渲染。
+  const nearBottomRef = useRef(true)
   // T-S2-08③ 流式轮次登记：chatSend 发起时写入 { turnId, bubbleId }，
   // chat:stream 事件按 turnId 归属本轮；onSuccess/onError 统一置 null 封轮，
   // 迟到事件（重试重复 token 等）由此守卫自然丢弃。
@@ -170,6 +173,20 @@ function App(): React.JSX.Element {
     setBubbles((prev) => [...prev, { id: bubbleSeq.current, role, text }])
   }
 
+  // 撤销锚点捕获（真撤销，架构 §5 信任交互的回退兜底）：写操作 IPC 发出前
+  // 读取当前 isCurrent 版本 id，成功后以其为目标注册撤销（restore-version）。
+  // VersionView 无 parentId，锚点只能显式「先取后存」——撤销恢复到操作前
+  // 基线而非链上任意位置。ensureQueryData 与 VersionHistoryPanel 共用
+  // ['versions', fileId] 缓存键，面板常驻渲染时命中缓存零额外 IPC；未命中
+  // 时补一次 listVersions（单次往返，可接受）。
+  const captureUndoAnchor = (fileId: string): Promise<string | null> =>
+    qc
+      .ensureQueryData({
+        queryKey: ['versions', fileId],
+        queryFn: () => window.api.listVersions(fileId)
+      })
+      .then((versions) => versions.find((v) => v.isCurrent)?.id ?? null)
+
   // 对话一轮（T-S2-04 请求/响应 + T-S2-08③ 流式过程）：ChangeSet 由主进程
   // AgentService 落库，渲染层只负责刷新 pending 卡片，不在本地拼装信任数据。
   // 终值收口：成功时以结构化 finalMessage 覆盖流式拼接文本（兜底重试重复
@@ -217,10 +234,14 @@ function App(): React.JSX.Element {
   })
 
   // 信任交互（架构 §5）：接受成功后基线已刷新，文件列表必须重取。
+  // 接受 = 不可逆写盘：成功即以接受前的 isCurrent 版本为锚注册真撤销。
   const acceptMutation = useMutation({
-    mutationFn: (vars: { id: string; acceptedChangeIds?: string[] }) =>
-      window.api.acceptChangeset(vars.id, vars.acceptedChangeIds),
-    onSuccess: (res) => {
+    mutationFn: async (vars: { id: string; fileId: string; acceptedChangeIds?: string[] }) => {
+      const anchorVersionId = await captureUndoAnchor(vars.fileId)
+      const res = await window.api.acceptChangeset(vars.id, vars.acceptedChangeIds)
+      return { res, anchorVersionId }
+    },
+    onSuccess: ({ res, anchorVersionId }, vars) => {
       if (!res.ok) {
         pushBubble(
           'system',
@@ -228,6 +249,13 @@ function App(): React.JSX.Element {
         )
       } else {
         pushBubble('assistant', `已写入文件（${res.appliedCount ?? 0} 处变更，状态 ${res.status}）。`)
+        if (anchorVersionId) {
+          pushUndo(`已应用变更（${res.appliedCount ?? 0} 处）`, {
+            type: 'restore-version',
+            fileId: vars.fileId,
+            versionId: anchorVersionId
+          })
+        }
       }
       void qc.invalidateQueries({ queryKey: ['changesets'] })
       void qc.invalidateQueries({ queryKey: ['files'] })
@@ -260,9 +288,14 @@ function App(): React.JSX.Element {
 
   // 线性回溯（T-S2-06 / 架构 §5）：恢复成功后文件基线、版本链与 pending
   // 变更集全部变化（同文件 pending 已被回溯清理），四类缓存都要重取。
+  // 恢复同样是写盘：成功即以恢复前的 isCurrent 版本为锚注册真撤销。
   const restoreMutation = useMutation({
-    mutationFn: (versionId: string) => window.api.restoreVersion(versionId),
-    onSuccess: (res) => {
+    mutationFn: async (vars: { versionId: string; fileId: string }) => {
+      const anchorVersionId = await captureUndoAnchor(vars.fileId)
+      const res = await window.api.restoreVersion(vars.versionId)
+      return { res, anchorVersionId }
+    },
+    onSuccess: ({ res, anchorVersionId }, vars) => {
       if (!res.ok) {
         pushBubble(
           'system',
@@ -273,6 +306,13 @@ function App(): React.JSX.Element {
           'assistant',
           `已恢复到目标版本（${res.appliedCount ?? 0} 处变更；回溯本身已生成新版本与反向 ChangeSet）。`
         )
+        if (anchorVersionId) {
+          pushUndo('已恢复到历史版本', {
+            type: 'restore-version',
+            fileId: vars.fileId,
+            versionId: anchorVersionId
+          })
+        }
       }
       void qc.invalidateQueries({ queryKey: ['versions'] })
       void qc.invalidateQueries({ queryKey: ['version-diff'] })
@@ -281,6 +321,45 @@ function App(): React.JSX.Element {
       // T-S2-05A：正文已回退，右栏手动微调的段落数据同步失效。
       void qc.invalidateQueries({ queryKey: ['paragraphs'] })
       // T-S2-08：正文已回退，右栏预览 HTML 同步失效。
+      void qc.invalidateQueries({ queryKey: ['preview-html'] })
+    },
+    onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
+  })
+
+  // 真撤销执行（Toast「撤销」按钮）：本质是又一次线性回溯——先捕获撤销前
+  // 的 isCurrent 版本再 restore，成功后把它注册为新撤销条目，自然形成
+  // 「撤销 → 撤销的撤销（重做）」链。失败走系统气泡；到窗不点则由 prune 兜底。
+  const undoMutation = useMutation({
+    mutationFn: async (action: { fileId: string; versionId: string }) => {
+      const redoAnchorVersionId = await captureUndoAnchor(action.fileId)
+      const res = await window.api.restoreVersion(action.versionId)
+      return { res, redoAnchorVersionId }
+    },
+    onSuccess: ({ res, redoAnchorVersionId }, action) => {
+      clearUndo()
+      if (!res.ok) {
+        pushBubble(
+          'system',
+          `撤销失败 [${res.error?.code ?? 'UNKNOWN'}]：${res.error?.message ?? '未知错误'}`
+        )
+      } else {
+        pushBubble(
+          'assistant',
+          '已撤销：文件恢复到操作前的版本（回溯本身已生成新版本与反向 ChangeSet）。'
+        )
+        if (redoAnchorVersionId) {
+          pushUndo('已撤销 · 点此恢复刚才的结果', {
+            type: 'restore-version',
+            fileId: action.fileId,
+            versionId: redoAnchorVersionId
+          })
+        }
+      }
+      void qc.invalidateQueries({ queryKey: ['versions'] })
+      void qc.invalidateQueries({ queryKey: ['version-diff'] })
+      void qc.invalidateQueries({ queryKey: ['changesets'] })
+      void qc.invalidateQueries({ queryKey: ['files'] })
+      void qc.invalidateQueries({ queryKey: ['paragraphs'] })
       void qc.invalidateQueries({ queryKey: ['preview-html'] })
     },
     onError: (err: Error) => pushBubble('system', `通信失败：${err.message}`)
@@ -330,10 +409,14 @@ function App(): React.JSX.Element {
 
   // 外部编辑采纳（架构 §5.1「单一事实源」）：ChangeSet(source=external) +
   // Version(author=external) + 基线前移；同文件 pending 已在检出时置 stale，
-  // 这里集中失效全部相关缓存。
+  // 这里集中失效全部相关缓存。基线前移同样是写盘：注册真撤销。
   const externalAcceptMutation = useMutation({
-    mutationFn: (fileId: string) => window.api.acceptExternalChange(fileId),
-    onSuccess: (res) => {
+    mutationFn: async (fileId: string) => {
+      const anchorVersionId = await captureUndoAnchor(fileId)
+      const res = await window.api.acceptExternalChange(fileId)
+      return { res, anchorVersionId }
+    },
+    onSuccess: ({ res, anchorVersionId }, fileId) => {
       if (!res.ok) {
         pushBubble(
           'system',
@@ -341,6 +424,13 @@ function App(): React.JSX.Element {
         )
       } else {
         pushBubble('assistant', '外部改动已采纳为新基线（已生成版本与变更记录）。')
+        if (anchorVersionId) {
+          pushUndo('已采纳外部修改', {
+            type: 'restore-version',
+            fileId,
+            versionId: anchorVersionId
+          })
+        }
       }
       void qc.invalidateQueries({ queryKey: ['external-detections'] })
       void qc.invalidateQueries({ queryKey: ['external-diff'] })
@@ -410,6 +500,12 @@ function App(): React.JSX.Element {
     }
   }
 
+  // 智能滚动的贴底检测：距底 <80px 视为「在底部」，写 ref 不写 state。
+  const onChatScroll = (): void => {
+    const el = scrollRef.current
+    if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
   useEffect(() => {
     window.api
       .ping()
@@ -468,15 +564,24 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', onResize)
   }, [applyWindowWidth])
 
+  // 撤销窗口到期清理：按剩余时长精确调度一次 prune——与 Toast 倒计时条
+  // 同一时钟源（expiresAt），条尽即撤，Toast 不滞留到窗口之外。
   useEffect(() => {
     if (!undo) return
-    const t = setTimeout(() => pruneUndo(), 1_000)
+    const remaining = Math.max(0, undo.expiresAt - Date.now())
+    const t = setTimeout(() => pruneUndo(), remaining)
     return () => clearTimeout(t)
   }, [undo, pruneUndo])
 
+  // 智能自动滚动（体验优化）：默认贴底跟随新内容；用户上滑离开底部
+  // （>80px）即停止追新，阅读不被打断；自己发出的消息强制回底。
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const last = bubbles[bubbles.length - 1]
+    if (nearBottomRef.current || (last != null && last.role === 'user')) {
+      el.scrollTop = el.scrollHeight
+    }
   }, [bubbles, pendingChangesets])
 
   const ipcBadge = {
@@ -514,13 +619,6 @@ function App(): React.JSX.Element {
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setModelPanelOpen(true)}>
             模型设置
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => pushUndo('演示：应用了一次变更')}
-          >
-            模拟危险操作
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setDark((v) => !v)}>
             {dark ? '浅色' : '深色'}
@@ -630,7 +728,7 @@ function App(): React.JSX.Element {
           <h2 className="shrink-0 truncate border-b border-border px-4 py-2 text-xs font-medium uppercase tracking-wide text-text-muted">
             会话{selectedFile ? ` · ${selectedFile.name}` : ''}
           </h2>
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
+          <div ref={scrollRef} onScroll={onChatScroll} className="min-h-0 flex-1 overflow-auto p-4">
             {/* T-S2-05A 外部编辑横幅（PRD 2A.6「不静默覆盖」）：置顶常显，无检出时组件自渲染 null。 */}
             <ExternalChangePanel
               busy={externalAcceptMutation.isPending || externalIgnoreMutation.isPending}
@@ -649,8 +747,10 @@ function App(): React.JSX.Element {
             <div className="space-y-2.5">
               {bubbles.map((b) => (
                 <div key={b.id} className={`flex ${b.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {/* 气泡入场：淡入 + 轻微上移，200ms 一次性播放；流式重渲染
+                      不重播（animate-in 只在元素挂载时起效）。 */}
                   <div
-                    className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3.5 py-2 text-sm ${
+                    className={`max-w-[85%] animate-in whitespace-pre-wrap rounded-lg px-3.5 py-2 text-sm fade-in-0 slide-in-from-bottom-1 duration-200 motion-reduce:animate-none ${
                       b.role === 'user'
                         ? 'bg-accent text-white'
                         : b.role === 'assistant'
@@ -677,7 +777,7 @@ function App(): React.JSX.Element {
                 view={cs}
                 busy={acceptMutation.isPending || rejectMutation.isPending}
                 onAccept={(id, acceptedChangeIds) =>
-                  acceptMutation.mutate({ id, acceptedChangeIds })
+                  acceptMutation.mutate({ id, fileId: cs.fileId, acceptedChangeIds })
                 }
                 onReject={(id) => rejectMutation.mutate(id)}
               />
@@ -687,8 +787,10 @@ function App(): React.JSX.Element {
               <VersionHistoryPanel
                 key={selectedFile.id}
                 file={selectedFile}
-                busy={restoreMutation.isPending}
-                onRestore={(versionId) => restoreMutation.mutate(versionId)}
+                busy={restoreMutation.isPending || undoMutation.isPending}
+                onRestore={(versionId) =>
+                  restoreMutation.mutate({ versionId, fileId: selectedFile.id })
+                }
               />
             )}
           </div>
@@ -816,18 +918,33 @@ function App(): React.JSX.Element {
 
       <ModelConfigPanel open={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
 
+      {/* 真撤销 Toast（架构 §5）：写操作成功后弹出，TTL 内可一键回滚到操作前
+          基线。外层 wrapper 只负责定位（水平居中的 translate 与入场动画的
+          transform 分离，避免动画期间覆盖居中）；内层 key 随 expiresAt 重挂载，
+          新一轮撤销时入场动画与倒计时条都从头播放。 */}
       {undo && (
-        <div
-          role="status"
-          className="pointer-events-auto absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border bg-surface-raised px-4 py-2.5 text-sm shadow-lg"
-        >
-          <span className="text-text-body">{undo.lastAction}</span>
-          <button
-            onClick={clearUndo}
-            className="rounded-sm bg-accent px-2.5 py-1 text-xs font-medium text-accent-text"
+        <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2">
+          <div
+            key={undo.expiresAt}
+            role="status"
+            className="pointer-events-auto relative flex animate-in items-center gap-3 overflow-hidden rounded-lg border border-border bg-surface-raised px-4 py-2.5 text-sm shadow-lg fade-in-0 slide-in-from-bottom-4 duration-200 motion-reduce:animate-none"
           >
-            撤销
-          </button>
+            <span className="text-text-body">{undo.lastAction}</span>
+            <button
+              onClick={() => undoMutation.mutate(undo.action)}
+              disabled={undoMutation.isPending}
+              className="rounded-sm bg-accent px-2.5 py-1 text-xs font-medium text-accent-text transition active:scale-[0.97] disabled:opacity-60"
+            >
+              {undoMutation.isPending ? '撤销中…' : '撤销'}
+            </button>
+            {/* 倒计时进度条：时长与 store 的 UNDO_TTL_MS 同源（免两处漂移），
+                animationDuration 内联覆盖 CSS 默认值。 */}
+            <span
+              aria-hidden="true"
+              className="mwo-undo-bar"
+              style={{ animationDuration: `${UNDO_TTL_MS}ms` }}
+            />
+          </div>
         </div>
       )}
     </div>

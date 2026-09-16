@@ -19,8 +19,17 @@ export interface PendingChange {
   risk: RiskLevel
 }
 
+// 限时撤销的回退语义（T-S2-06）：应用变更 / 恢复版本 / 采纳外部基线都会
+// 生成新版本，撤销锚点即「操作前的当前版本」，回退统一走 restoreVersion。
+export type UndoAction = {
+  type: 'restore-version'
+  fileId: string
+  versionId: string
+}
+
 export interface UndoEntry {
   lastAction: string
+  action: UndoAction
   expiresAt: number
 }
 

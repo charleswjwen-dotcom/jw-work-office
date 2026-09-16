@@ -48,6 +48,9 @@ export function ModelConfigPanel({
   const [form, setForm] = useState<ConfigForm | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
+  // 两步删除确认的「武装」行 id：null = 未武装；非 null = 该行删除按钮已进入
+  // 红色确认态，等待同一行第二次点击才真正执行。
+  const [confirmId, setConfirmId] = useState<string | null>(null)
 
   const configsQuery = useQuery({
     queryKey: ['model-configs'],
@@ -60,15 +63,28 @@ export function ModelConfigPanel({
     enabled: open
   })
 
-  // Esc 关闭：modal 顶层无焦点时仍可响应。
+  // Esc 关闭：modal 顶层无焦点时仍可响应；关闭即同步解除武装态
+  // （事件回调内 setState，属外部系统订阅的合法形态）。
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        setConfirmId(null)
+        onClose()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  // 武装态生命周期：3s 内未二次点击自动解除（避免误触后长期悬挂的
+  // 「已上膛」按钮）。组件在面板关闭时仍挂载（仅 return null），定时器
+  // 继续走完，武装态不会跨开关周期泄漏。
+  useEffect(() => {
+    if (confirmId == null) return
+    const t = setTimeout(() => setConfirmId(null), 3000)
+    return () => clearTimeout(t)
+  }, [confirmId])
 
   const refresh = (): void => {
     void qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -139,6 +155,7 @@ export function ModelConfigPanel({
   })
 
   const startEdit = (c: ModelConfigView): void => {
+    setConfirmId(null)
     setForm({
       id: c.id,
       name: c.name,
@@ -150,10 +167,15 @@ export function ModelConfigPanel({
     setFormError(null)
   }
 
+  // 两步内联删除确认（体验优化）：替代 window.confirm 原生弹窗——第一次
+  // 点击仅武装该行（按钮转红色确认态），第二次点击同一行才真正执行；点击
+  // 其他行/其他操作自动解除或改写武装目标。不可逆操作的双重确认口径不变。
   const onDelete = (c: ModelConfigView): void => {
-    if (!window.confirm(`确定删除配置「${c.name}」？对应密钥将一并清除，此操作不可撤销。`)) {
+    if (confirmId !== c.id) {
+      setConfirmId(c.id)
       return
     }
+    setConfirmId(null)
     setListError(null)
     deleteMutation.mutate(c.id)
   }
@@ -191,7 +213,14 @@ export function ModelConfigPanel({
       <div className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-head">模型设置</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setConfirmId(null)
+              onClose()
+            }}
+          >
             关闭
           </Button>
         </div>
@@ -335,6 +364,7 @@ export function ModelConfigPanel({
                   disabled={busy}
                   onClick={() => {
                     // 首条配置自动默认（与主进程 create 分支同规则）。
+                    setConfirmId(null)
                     setForm({ ...EMPTY_FORM, isDefault: configs.length === 0 })
                     setFormError(null)
                   }}
@@ -385,18 +415,29 @@ export function ModelConfigPanel({
                             variant="ghost"
                             size="sm"
                             disabled={busy}
-                            onClick={() => setDefaultMutation.mutate(c.id)}
+                            onClick={() => {
+                              setConfirmId(null)
+                              setDefaultMutation.mutate(c.id)
+                            }}
                           >
                             设为默认
                           </Button>
                         )}
+                        {/* 武装态按钮：实底红 + 短促缩放入场，视觉上与普通
+                            删除明显区分；className 后写经 twMerge 覆盖
+                            danger 变体的弱化默认。 */}
                         <Button
                           variant="danger"
                           size="sm"
                           disabled={busy}
+                          className={
+                            confirmId === c.id
+                              ? 'animate-in border-red bg-red font-semibold text-white fade-in-0 zoom-in-95 duration-150 hover:bg-red motion-reduce:animate-none'
+                              : undefined
+                          }
                           onClick={() => onDelete(c)}
                         >
-                          删除
+                          {confirmId === c.id ? '确认删除？' : '删除'}
                         </Button>
                       </div>
                     ))}

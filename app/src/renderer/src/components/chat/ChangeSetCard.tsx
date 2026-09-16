@@ -91,7 +91,7 @@ export function ChangeSetCard({ view, busy, onAccept, onReject }: ChangeSetCardP
   const kindPill = `${[...new Set(rows.map((r) => KIND_LABEL[r.change.kind]))].join('/')} · ${rows.length} 处`
 
   return (
-    <div className="mt-2.5 overflow-hidden rounded-sm border border-border bg-surface-raised shadow-sm">
+    <div className="mt-2.5 animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none overflow-hidden rounded-sm border border-border bg-surface-raised shadow-sm">
       <div className="flex items-center gap-2.5 border-b border-border-sub px-3.5 py-2.5">
         <span
           className="min-w-0 truncate text-[12.5px] font-semibold text-text-head"

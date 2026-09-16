@@ -83,7 +83,17 @@ export function WordPreviewPanel({
   }, [html, pendingChanges])
 
   if (previewQuery.isPending)
-    return <p className="text-sm text-text-muted">正在生成预览…</p>
+    return (
+      <div aria-busy="true" className="space-y-3">
+        <div className="mwo-skeleton h-3.5 w-1/3" />
+        <div className="mwo-skeleton h-3 w-full" />
+        <div className="mwo-skeleton h-3 w-11/12" />
+        <div className="mwo-skeleton h-3 w-4/5" />
+        <div className="mwo-skeleton h-3 w-full" />
+        <div className="mwo-skeleton h-3 w-2/3" />
+        <div className="mwo-skeleton h-3 w-5/6" />
+      </div>
+    )
   if (previewQuery.isError)
     return <p className="text-sm text-red">预览失败：{previewQuery.error.message}</p>
   if (!res?.ok)
